@@ -28,6 +28,10 @@ import android.view.KeyEvent;
 import android.view.WindowManager;
 import android.widget.Toast;
 
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
@@ -38,6 +42,7 @@ public final class DashboardActivity extends Activity implements LocationListene
             OEM_ACTION = "illumination_action", OEM_EXTRA = "illumination_extra", LIMIT = "speed_limit", ALERT = "speed_alert",
             ACC_ACTION = "ignition_action", ACC_EXTRA = "ignition_extra", ACC_PERMISSION = "ignition_permission",
             POWER_TONES = "power_tones";
+    private static final String DIAL_GAUGE = "dial_gauge", REGISTRATION = "registration_label";
     final Handler main = new Handler(Looper.getMainLooper());
     SharedPreferences prefs;
     AppShortcuts apps;
@@ -112,6 +117,9 @@ public final class DashboardActivity extends Activity implements LocationListene
         trip.alert(limit(), alertEnabled());
         locations = getSystemService(LocationManager.class);
         dashboard = new DashboardView(this, this::dispatch);
+        dashboard.data.dialGauge = prefs.getBoolean(DIAL_GAUGE, false);
+        dashboard.data.registration = prefs.contains(REGISTRATION)
+                ? VehicleRegistration.normalize(prefs.getString(REGISTRATION, "")) : bundledRegistration();
         media = new MediaBridge(this, prefs, this::render);
         weather = new WeatherClient(prefs, this::render);
         panels = new ConsolePanels(this);
@@ -203,7 +211,7 @@ public final class DashboardActivity extends Activity implements LocationListene
 
     @Override public void onBackPressed() {
         if (dashboard.hidePowerScreen()) { audio.stopGreeting(); return; }
-        if (dashboard.closeInspection() || homeLaunch()) return;
+        if (homeLaunch()) return;
         super.onBackPressed();
     }
 
@@ -232,7 +240,6 @@ public final class DashboardActivity extends Activity implements LocationListene
     private void setWorking(boolean on) {
         if (working == on || (on && shuttingDown)) return;
         working = on;
-        dashboard.setActive(on);
         if (on) {
             DriveNotifications.watch(this::updateRoute);
             media.start();
@@ -426,6 +433,29 @@ public final class DashboardActivity extends Activity implements LocationListene
         if (attrs.screenBrightness != brightness) { attrs.screenBrightness = brightness; getWindow().setAttributes(attrs); }
         if (panels != null) panels.brightness(brightness);
         render();
+    }
+
+    private String bundledRegistration() {
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(
+                getAssets().open("vehicle/registration.txt"), StandardCharsets.US_ASCII))) {
+            return VehicleRegistration.normalize(reader.readLine());
+        } catch (IOException ignored) { return ""; }
+    }
+
+    boolean dialGauge() { return dashboard.data.dialGauge; }
+    String registration() { return dashboard.data.registration; }
+
+    void setDialGauge(boolean enabled) {
+        prefs.edit().putBoolean(DIAL_GAUGE, enabled).apply();
+        dashboard.data.dialGauge = enabled;
+        dashboard.refresh();
+    }
+
+    void setRegistration(String label) {
+        String cleaned = VehicleRegistration.normalize(label);
+        prefs.edit().putString(REGISTRATION, cleaned).apply();
+        dashboard.data.registration = cleaned;
+        dashboard.refresh();
     }
 
     boolean powerTones() { return prefs.getBoolean(POWER_TONES, true); }

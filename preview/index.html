@@ -7,7 +7,7 @@
   <meta name="description" content="Vezel Drive Console — a native car launcher for the Honda Vezel RU3. Interactive browser simulator.">
   <title>Vezel Drive Console</title>
   <link rel="icon" href="/shared/honda.svg" type="image/svg+xml">
-  <link rel="preload" href="/shared/vezel-on.jpg" as="image">
+  <link rel="preload" href="/shared/vezel-photo.webp" as="image">
   <link rel="stylesheet" href="/console.css">
   <script type="module" src="/console.js"></script>
 </head>
@@ -43,6 +43,7 @@
           </svg>
           <div class="speed-reading"><span id="speed">50</span><span>km/h</span></div>
         </div>
+        <div class="speed-rail" id="speed-rail" aria-hidden="true"></div>
         <button class="limit-button" type="button" data-panel="settings" title="Set speed alert">
           <span class="limit-normal" id="limit-normal"><span class="limit-sign" id="limit-sign">60</span><span>SPEED ALERT</span></span>
           <span class="limit-warning" id="limit-warning" hidden><svg class="icon" aria-hidden="true"><use href="/icons.svg#warning"></use></svg><span><b>LIMIT REACHED</b><small id="warning-detail">60 km/h · Slow down</small></span></span>
@@ -55,30 +56,28 @@
       </section>
 
       <section class="vehicle" aria-label="Honda Vezel in Wine Red">
-        <div class="vehicle-scene" aria-hidden="true">
-          <img class="scene-off" src="/shared/vezel-off.jpg" alt="" width="864" height="488">
-          <img class="scene-on" src="/shared/vezel-on.jpg" alt="" width="864" height="488">
-        </div>
-        <canvas class="vehicle-model" id="vehicle-model" tabindex="-1" aria-hidden="true"
-          aria-label="Honda Vezel 3D model. Drag or use arrow keys to rotate. Pinch or use plus and minus to zoom. Home resets the view."></canvas>
-        <div class="vehicle-shade" aria-hidden="true"></div>
-        <div class="vehicle-title">
-          <span class="eyebrow vehicle-kicker"><i></i> VEHICLE PROFILE</span>
-          <h2>Honda Vezel</h2>
-          <span class="eyebrow variant">2014 <i>/</i> HYBRID RU3</span>
-        </div>
-        <button class="route" type="button" data-panel="navigation" aria-label="Navigation: in 400 metres turn right onto Galle Road">
-          <svg class="route-decoration" width="250" height="94" viewBox="0 0 250 94" aria-hidden="true"><path d="M148 102l25-42 31-7 27-38 33-6M167 105l23-38 25-5 26-34 27-5M203 103l13-26 20-7 28-31" fill="none" stroke="currentColor" stroke-width="1"/><path d="M190 101l17-31 21-6 25-33" fill="none" stroke="currentColor" stroke-dasharray="3 5"/></svg>
-          <span class="turn"><svg class="icon" aria-hidden="true"><use href="/icons.svg#turn_right"></use></svg></span>
-          <span class="route-copy"><strong>400 <span>m</span></strong><b>Turn right onto Galle Rd</b><small>9:14 AM ETA <i>·</i> 6.2 km</small></span>
-        </button>
-        <div class="vehicle-footer">
-          <span class="paint"><i></i><span><small>EXTERIOR</small><b>Wine Red</b></span></span>
-          <button class="vehicle-expand" type="button" id="vehicle-expand" aria-haspopup="dialog" aria-label="Inspect the 3D car" hidden>
-            <span class="orbit-label">360°</span><span class="orbit-hint">DRAG TO ROTATE</span><span class="orbit-divider"></span><span>Inspect</span>
-            <svg class="icon" aria-hidden="true" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.35"><path d="M9 3h4v4M13 3 9 7M7 13H3V9m0 4 4-4"/></svg>
+        <div class="vehicle-top">
+          <div class="vehicle-title">
+            <span class="eyebrow vehicle-kicker"><i></i> 2014 / HYBRID RU3</span>
+            <h2>Honda Vezel</h2>
+          </div>
+          <button class="route" type="button" data-panel="navigation" aria-label="Navigation: in 400 metres turn right onto Galle Road">
+            <svg class="route-decoration" width="250" height="94" viewBox="0 0 250 94" aria-hidden="true"><path d="M148 102l25-42 31-7 27-38 33-6M167 105l23-38 25-5 26-34 27-5M203 103l13-26 20-7 28-31" fill="none" stroke="currentColor" stroke-width="1"/><path d="M190 101l17-31 21-6 25-33" fill="none" stroke="currentColor" stroke-dasharray="3 5"/></svg>
+            <span class="turn"><svg class="icon" aria-hidden="true"><use href="/icons.svg#turn_right"></use></svg></span>
+            <span class="route-copy"><strong>400 <span>m</span></strong><b>Turn right onto Galle Rd</b><small>9:14 AM ETA <i>·</i> 6.2 km</small></span>
           </button>
-          <button class="headlight-button" type="button" id="lamps" aria-pressed="true" title="Toggle illustrated headlights and fog lights"><svg class="icon" aria-hidden="true"><use href="/icons.svg#headlights"></use></svg><span id="light-label">LIGHTS + FOG ON</span></button>
+        </div>
+        <figure class="vehicle-scene">
+          <img class="scene-off" src="/shared/vezel-photo.webp" alt="Photograph of a Wine Red Honda Vezel Hybrid RU3, showing its side and front" width="1024" height="576">
+          <img class="scene-on" src="/shared/vezel-photo-lit.webp" alt="" aria-hidden="true" width="1024" height="576">
+        </figure>
+        <div class="vehicle-footer">
+          <div class="vehicle-detail">
+            <span class="paint"><i></i><span><small>EXTERIOR</small><b>Wine Red</b></span></span>
+            <span class="vehicle-edition eyebrow" id="photo-edition">PHOTO EDITION</span>
+            <span class="registration" id="registration-badge" hidden><small>REGISTRATION</small><b id="registration-label"></b></span>
+          </div>
+          <button class="headlight-button" type="button" id="lamps" aria-pressed="false" title="Toggle headlights and fog lamp in the photo"><svg class="icon" aria-hidden="true"><use href="/icons.svg#headlights"></use></svg><span id="light-label">LIGHTS + FOG OFF</span></button>
         </div>
       </section>
     </div>
@@ -126,21 +125,6 @@
       <div class="welcome-center"><img src="/shared/honda-gold.svg" alt="Honda"><strong id="greeting">Welcome</strong><span>HONDA / VEZEL</span></div>
     </div>
   </main>
-  <dialog id="vehicle-inspector" aria-labelledby="inspection-title">
-    <div id="vehicle-studio" class="inspection-scene"></div>
-    <header class="inspection-header">
-      <div><span class="eyebrow vehicle-kicker"><i></i> VEHICLE INSPECTION</span><h2 id="inspection-title">Honda Vezel</h2><span class="eyebrow variant">2014 <i>/</i> HYBRID RU3</span></div>
-      <button id="vehicle-close" class="night-button" type="button" aria-label="Close vehicle inspection"><svg class="icon" aria-hidden="true"><use href="/icons.svg#close"></use></svg></button>
-    </header>
-    <footer class="inspection-footer">
-      <p>Drag to rotate <i>·</i> Pinch or scroll to zoom</p>
-      <div id="vehicle-controls" aria-label="Vehicle views">
-        <button class="action" type="button" data-vehicle-view="front">Front</button>
-        <button class="action" type="button" data-vehicle-view="rear">Rear</button>
-        <button class="action" type="button" data-vehicle-view="reset">Reset view</button>
-      </div>
-    </footer>
-  </dialog>
   <dialog id="panel" aria-labelledby="panel-title">
     <div class="panel-frame">
       <header class="panel-header"><div><span class="eyebrow" id="panel-kicker">DRIVE CONSOLE</span><h2 id="panel-title">Settings</h2></div><button id="panel-close" class="night-button" type="button" aria-label="Close panel"><svg class="icon" aria-hidden="true"><use href="/icons.svg#close"></use></svg></button></header>

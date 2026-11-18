@@ -12,6 +12,7 @@ import android.graphics.drawable.RippleDrawable;
 import android.os.Build;
 import android.provider.Settings;
 import android.text.Editable;
+import android.text.InputFilter;
 import android.text.InputType;
 import android.text.TextWatcher;
 import android.text.TextUtils;
@@ -57,6 +58,7 @@ final class ConsolePanels {
     void settings() {
         Shell s = shell("VEZEL DRIVE CONSOLE", "Drive settings", true);
         note(s.body, "Set up your home screen and shortcuts while parked.");
+        button(s.body, "Dashboard appearance  ·  Speed & registration", true, this::dashboardAppearance);
         section(s.body, "Display mode");
         int mode = activity.prefs.getInt(DashboardActivity.MODE, 0);
         choices(s.body, new String[]{"Auto", "Day", "Night"}, mode == 1 ? 2 : mode == 2 ? 1 : 0, index -> {
@@ -93,6 +95,29 @@ final class ConsolePanels {
         section(s.body, "Weather");
         toggle(s.body, "Weather from Open-Meteo", activity.weather.enabled(), activity::toggleWeather);
         note(s.body, "Weather uses rounded coordinates. Without location, the default is Colombo.");
+        show(s);
+    }
+
+    private void dashboardAppearance() {
+        Shell s = shell("PHOTO EDITION", "Dashboard appearance", true);
+        section(s.body, "Speed display");
+        choices(s.body, new String[]{"Large number", "Round dial"}, activity.dialGauge() ? 1 : 0,
+                index -> activity.setDialGauge(index == 1));
+        section(s.body, "Registration label");
+        note(s.body, "Your registration appears beside the Wine Red swatch. It is not drawn over the photograph. Leave it blank to hide it.");
+        EditText entry = field("Optional registration, e.g. WP ABC 0123", activity.registration());
+        entry.setFilters(new InputFilter[]{new InputFilter.LengthFilter(32)});
+        entry.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+        s.body.addView(entry, withMargin(6, dp(44)));
+        button(s.body, "Save dashboard", true, () -> {
+            String input = entry.getText().toString().trim();
+            if (!input.isEmpty() && VehicleRegistration.normalize(input).isEmpty()) {
+                entry.setError("Use two blocks and an optional province, e.g. WP ABC 0123");
+                return;
+            }
+            activity.setRegistration(input);
+            dismiss();
+        });
         show(s);
     }
 

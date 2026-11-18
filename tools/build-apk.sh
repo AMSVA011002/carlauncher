@@ -6,7 +6,7 @@ cd "$(dirname "$0")/.."
 usage() {
   echo 'Usage: tools/build-apk.sh [--sdk-only] [--personal]'
   echo 'Default: Gradle wrapper, generic plates. --sdk-only uses the Android SDK CLI tools.'
-  echo '--personal includes the Git-ignored plate atlas and writes only to artifacts/private/.'
+  echo '--personal includes the Git-ignored registration label and writes only to artifacts/private/.'
 }
 
 fail() { printf 'APK build: %s\n' "$*" >&2; exit 1; }
@@ -25,8 +25,8 @@ assets=(-A shared)
 gradle_flags=()
 destination=artifacts
 if "$personal"; then
-  [[ -f private-assets/vehicle/local-decals.png ]] || fail 'generate your local decals with tools/generate_vehicle.py first'
-  assets+=(-A private-assets)
+  [[ -s private-assets/photo/vehicle/registration.txt ]] || fail 'prepare a registration with tools/personalize_vehicle.py first'
+  assets+=(-A private-assets/photo)
   gradle_flags+=(-PpersonalVehicle=true)
   destination=artifacts/private
 fi
@@ -115,8 +115,7 @@ badging=$("$bt/aapt2" dump badging "$apk")
    $badging == *"targetSdkVersion:'$target_sdk'"* ]] || fail 'APK Android API level mismatch'
 [[ $badging == *'DashboardActivity'* && $badging == *"provides-component:'launcher'"* ]] || fail 'Home launcher activity not packaged'
 entries=$(unzip -Z1 "$apk")
-for entry in classes.dex assets/fonts/instrument.ttf assets/vezel-off.jpg assets/vezel-on.jpg \
-  assets/vehicle/vezel.mesh assets/vehicle/decals.png assets/vehicle/showroom.vert assets/vehicle/showroom.frag \
+for entry in classes.dex assets/fonts/instrument.ttf assets/vezel-photo.webp assets/vezel-photo-lit.webp \
   assets/audio/speed-warning.mp3 assets/audio/welcome.wav assets/audio/goodbye.wav; do
   grep -Fxq "$entry" <<< "$entries" || fail "missing $entry"
 done
@@ -127,8 +126,8 @@ for clip in speed-warning.mp3 welcome.wav goodbye.wav; do
     || fail "audio clip must be stored without compression: $clip"
 done
 has_personal=false
-if grep -Fxq 'assets/vehicle/local-decals.png' <<< "$entries"; then has_personal=true; fi
-[[ "$has_personal" == "$personal" ]] || fail 'APK does not match the requested number plate edition'
+if grep -Fxq 'assets/vehicle/registration.txt' <<< "$entries"; then has_personal=true; fi
+[[ "$has_personal" == "$personal" ]] || fail 'APK does not match the requested registration edition'
 
 name=Vezel-Drive-Console.apk
 mkdir -p "$destination"

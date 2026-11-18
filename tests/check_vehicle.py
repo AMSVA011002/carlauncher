@@ -1,41 +1,30 @@
-"""Validate the shared binary format and asset budgets without GPU or Pillow."""
-import math
-import struct
+"""Check the two offline photo assets without Pillow or a graphics runtime."""
 from pathlib import Path
+import struct
 
-ASSETS = Path(__file__).resolve().parents[1] / 'shared' / 'vehicle'
-STRIDE = 28
-mesh = (ASSETS / 'vezel.mesh').read_bytes()
-magic, version, vertices, indices = struct.unpack_from('<4s3I', mesh)
-start = 16 + vertices * STRIDE
-assert (magic, version) == (b'VZ3D', 1), 'Shared mesh layout differs from the renderers'
-assert 0 < indices <= 90_000 and indices % 3 == 0, 'Keep the model below 30K triangles'
-assert 0 < vertices <= 24_000 and start + indices * 2 == len(mesh), 'Invalid mesh size'
-assert max(i for i, in struct.iter_unpack('<H', mesh[start:])) < vertices, 'Invalid vertex index'
-assert len(mesh) < 700_000, 'Keep the upload size small on 1 GB hardware'
+SHARED = Path(__file__).resolve().parents[1] / 'shared'
 
-front, rear, side, chassis, fog = 0, 0, 0, 0, 0
-for vertex in struct.iter_unpack('<3f4b4B2H4B', mesh[16:start]):
-    x, y, z = vertex[:3]
-    assert all(math.isfinite(v) for v in (x, y, z)), 'Invalid position'
-    if vertex[10] == 0:  # Floor, not part of the vehicle bounds.
-        assert abs(y) < .02
-    else:
-        assert abs(x) < 2.35 and abs(z) < 1.05 and -.002 <= y < 1.70
-        chassis += 1
-    if vertex[-1] == 255:  # Decals live on the mesh, not over the screen.
-        front += x > 2.12
-        rear += x < -2.12
-        side += abs(x) <= 2.12 and abs(z) > .82
-    if 160 < vertex[-2] < 181:  # Fog lenses (warm white, independent from main/lamp materials).
-        assert x > 2 and .36 < y < .48 and .60 < abs(z) < .74
-        fog += 1
-assert (front, rear, side) == (8, 24, 8) and chassis == vertices - 4
-assert 40 < fog < 400, 'Both recessed fog lamps must be drawn'
 
-atlas = (ASSETS / 'decals.png').read_bytes()
-assert atlas[:8] == b'\x89PNG\r\n\x1a\n' and atlas[12:16] == b'IHDR'
-assert struct.unpack_from('>2I2B', atlas, 16) == (512, 512, 8, 6), 'Use a mipmappable RGBA atlas'
-assert len(atlas) < 90_000, 'Keep the decal atlas small'
-assert not (ASSETS / 'local-decals.png').exists(), 'Never put the personal atlas in shared assets'
-print('Vehicle mesh, decals and asset budgets passed.')
+def pixels(content):
+    assert content[:4] == b'RIFF' and content[8:12] == b'WEBP', 'Expected a WebP still'
+    assert struct.unpack_from('<I', content, 4)[0] + 8 == len(content), 'Incomplete WebP'
+    tag = content[12:16]
+    if tag == b'VP8X':
+        assert not content[20] & 2, 'Expected a still, not an animation'
+        return tuple(int.from_bytes(content[i:i + 3], 'little') + 1 for i in (24, 27))
+    if tag == b'VP8L':
+        assert content[20] == 0x2f
+        bits = struct.unpack_from('<I', content, 21)[0]
+        return (bits & 0x3fff) + 1, ((bits >> 14) & 0x3fff) + 1
+    assert tag == b'VP8 ' and content[23:26] == b'\x9d\x01\x2a'
+    return tuple(n & 0x3fff for n in struct.unpack_from('<HH', content, 26))
+
+
+source = (SHARED / 'vezel-photo.webp').read_bytes()
+lit = (SHARED / 'vezel-photo-lit.webp').read_bytes()
+assert pixels(source) == pixels(lit) == (1024, 576), 'Lighting states must use the same uncropped composition'
+assert source != lit, 'Lights need a distinct frame'
+assert len(source) + len(lit) < 150_000, 'Keep the photo assets lightweight'
+assert not list(SHARED.rglob('registration.txt')), 'The default build must not include a personal registration'
+assert not list(SHARED.rglob('*.mesh')), 'Photo edition does not need a 3D asset'
+print('Reference photo, lighting states and asset budgets passed.')
