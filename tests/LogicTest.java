@@ -5,9 +5,9 @@ public final class LogicTest {
         tripAndAlert();
         navigation();
         lights();
-        camera();
+        registration();
         power();
-        System.out.println("Trip, speed alert, notification, illumination, power cue and 3D camera tests passed.");
+        System.out.println("Trip, speed alert, notification, illumination, power cue and registration tests passed.");
     }
 
     private static void tripAndAlert() {
@@ -101,29 +101,14 @@ public final class LogicTest {
         check(LightSignal.night(0, true, false) && !LightSignal.night(2, true, true), "Auto and manual night");
     }
 
-    private static void camera() {
-        float[] matrix = new float[16], eye = new float[3];
-        for (int i = 0; i < 4; i++) {
-            VehicleCamera.project(matrix, eye, i * VehicleCamera.TURN / 4, .24f, 1, false, 696f / 393f);
-            double angle = Math.atan2(eye[2], eye[0]);
-            check(Math.abs(Math.IEEEremainder(angle - i * Math.PI / 2, 2 * Math.PI)) < .001, "Full camera orbit");
-        }
-        VehicleCamera.project(matrix, eye, 0, VehicleCamera.CLOSE_PITCH, VehicleCamera.CLOSE_ZOOM, true, 1024f / 600f);
-        check(projected(matrix, 0, 2.23f, .52f, .29f) < 0, "Front plate is right-reading");
-        check(projected(matrix, 1, 2.23f, .465f, -.29f) > -.78f, "Front plate is above the inspector buttons");
-        VehicleCamera.project(matrix, eye, VehicleCamera.TURN / 2, VehicleCamera.CLOSE_PITCH, VehicleCamera.CLOSE_ZOOM, true, 1024f / 600f);
-        check(projected(matrix, 0, -2.22f, .79f, -.17f) < 0, "Rear plate is right-reading");
-        check(projected(matrix, 1, -2.22f, .68f, -.17f) > -.78f, "Rear plate is above the inspector buttons");
-        VehicleCamera.project(matrix, eye, .9f, VehicleCamera.MAX_PITCH, 1, true, 1024f / 600f);
-        check(eye[1] > 6, "Orbit can see the roof");
-        VehicleCamera.project(matrix, eye, 0, VehicleCamera.MAX_PITCH, 1, false, 696f / 393f);
-        check(projected(matrix, 1, 2.22f, .86f, .7f) > -.78f && projected(matrix, 1, -2.22f, 1.11f, .79f) < .57f,
-                "A steep dashboard orbit keeps both ends clear of the controls");
-    }
-
-    private static float projected(float[] m, int row, float x, float y, float z) {
-        return (m[row] * x + m[row + 4] * y + m[row + 8] * z + m[row + 12]) /
-                (m[3] * x + m[7] * y + m[11] * z + m[15]);
+    private static void registration() {
+        check(VehicleRegistration.normalize(" wp  abc 0123 ").equals("WP ABC 0123"),
+                "Keep the province and leading zero in the personal label");
+        check(VehicleRegistration.normalize("abc 0123").equals("ABC 0123"), "Province is optional");
+        check(VehicleRegistration.normalize(" ").isEmpty() && VehicleRegistration.normalize(null).isEmpty(),
+                "No label on generic installs");
+        check(VehicleRegistration.normalize("<img>").isEmpty() && VehicleRegistration.normalize("WP ABC +123").isEmpty(),
+                "Reject malformed labels");
     }
 
     private static void check(boolean condition, String description) {

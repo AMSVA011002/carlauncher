@@ -11,14 +11,14 @@ android {
         applicationId 'lk.vezel.console'
         minSdk 23
         targetSdk 34
-        versionCode 4
-        versionName '1.2.0'
+        versionCode 5
+        versionName '1.3.0'
     }
 
     sourceSets {
         main.assets.srcDir rootProject.file('shared')
         if (providers.gradleProperty('personalVehicle').orNull == 'true') {
-            main.assets.srcDir rootProject.file('private-assets')
+            main.assets.srcDir rootProject.file('private-assets/photo')
         }
     }
 

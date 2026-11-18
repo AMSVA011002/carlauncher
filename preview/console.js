@@ -1,8 +1,5 @@
-import { attachShowroom } from './vehicle.js';
-
 const $ = (id) => document.getElementById(id);
 const consoleView = $('console');
-const lightShowroom = attachShowroom();
 const panel = $('panel');
 const body = $('panel-content');
 const namespace = 'http://www.w3.org/2000/svg';
@@ -24,12 +21,19 @@ const tracks = [
   { name: 'Colombo After Dark', artist: 'Vezel Sessions', notes: [48, 55, 60, 64, 50, 57, 62, 65], hue: 287 },
   { name: 'Coastal Air', artist: 'Vezel Sessions', notes: [50, 57, 62, 66, 54, 61, 66, 69], hue: 145 },
 ];
-const config = { theme: 'day', lamps: true, limit: 60, alert: true, powerTones: true, track: 0, provider: 'maps' };
+const normalizeRegistration = value => {
+  if (typeof value !== 'string' || value.length > 64) return '';
+  const label = value.trim().toUpperCase().replace(/\s+/g, ' ');
+  return /^(?:[A-Z]{2} )?[A-Z0-9]{1,6} [A-Z0-9]{1,6}$/.test(label) ? label : '';
+};
+const config = { theme: 'day', lamps: false, gauge: 'large', registration: '', limit: 60, alert: true, powerTones: true, track: 0, provider: 'maps' };
 try {
   const saved = JSON.parse(localStorage.getItem(storageKey));
   if (saved && typeof saved === 'object') {
     if (['auto', 'day', 'night'].includes(saved.theme)) config.theme = saved.theme;
     if (typeof saved.lamps === 'boolean') config.lamps = saved.lamps;
+    if (saved.gauge === 'dial') config.gauge = 'dial';
+    config.registration = normalizeRegistration(saved.registration);
     if (typeof saved.alert === 'boolean') config.alert = saved.alert;
     if (typeof saved.powerTones === 'boolean') config.powerTones = saved.powerTones;
     if (Number.isInteger(saved.limit) && saved.limit >= 20 && saved.limit <= 140) config.limit = saved.limit;
@@ -91,6 +95,7 @@ const ticks = Array.from({ length: 41 }, (_, i) => {
   $('dial-ticks').append(line);
   return line;
 });
+const rail = Array.from({ length: 27 }, () => $('speed-rail').appendChild(document.createElement('i')));
 function renderGauge(allowVoice = false) {
   const progress = Math.min(demoSpeed / 160, 1);
   const angle = start + sweep * progress;
@@ -100,6 +105,8 @@ function renderGauge(allowVoice = false) {
   $('dial-point').setAttribute('cy', y);
   $('dial-point').style.visibility = progress ? 'visible' : 'hidden';
   ticks.forEach((line, i) => line.classList.toggle('reached', i / 40 <= progress && progress > 0));
+  rail.forEach((segment, i) => segment.classList.toggle('reached', i < Math.round(progress * rail.length)));
+  $('speed').classList.toggle('three-digits', demoSpeed >= 100);
   $('speed').textContent = demoSpeed;
   $('limit-sign').textContent = config.alert ? config.limit : '–';
   const over = config.alert && demoSpeed >= config.limit;
@@ -123,16 +130,20 @@ function renderAppearance() {
   const isNight = config.theme === 'night' || (config.theme === 'auto' && config.lamps);
   consoleView.classList.toggle('night-mode', isNight);
   consoleView.classList.toggle('lights-on', config.lamps);
-  lightShowroom(config.lamps, isNight);
+  consoleView.classList.toggle('dial-gauge', config.gauge === 'dial');
+  $('registration-label').textContent = config.registration;
+  $('registration-badge').hidden = !config.registration;
+  $('photo-edition').hidden = !!config.registration;
   $('night').setAttribute('aria-pressed', String(isNight));
   $('night').setAttribute('title', isNight ? 'Switch to day display' : 'Switch to night display');
   $('night').querySelector('use').setAttribute('href', `/icons.svg#${isNight ? 'sun' : 'moon'}`);
   $('lamps').setAttribute('aria-pressed', String(config.lamps));
   $('light-label').textContent = config.lamps ? 'LIGHTS + FOG ON' : 'LIGHTS + FOG OFF';
-  renderThemeButtons();
+  renderAppearanceButtons();
 }
-function renderThemeButtons() {
+function renderAppearanceButtons() {
   body.querySelectorAll('[data-theme]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.theme === config.theme)));
+  body.querySelectorAll('[data-gauge]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.gauge === config.gauge)));
 }
 function toast(message) {
   const bar = $('snackbar');
@@ -296,12 +307,29 @@ function show(name) {
   switch (name) {
     case 'settings':
       body.innerHTML = `<p class="panel-note">Try the console here with sample data. The Android app uses your head unit’s GPS, notifications and installed apps.</p>
+        <section class="panel-section"><div class="setting-caption">Speed display</div><div class="segmented" aria-label="Speed display">${[['large', 'Large number'], ['dial', 'Round dial']].map(([value, label]) => `<button type="button" data-gauge="${value}" aria-pressed="${config.gauge === value}">${label}</button>`).join('')}</div></section>
+        <form class="panel-section" id="registration-form"><label for="registration-input">Registration label (optional)</label><div class="registration-field"><input type="text" id="registration-input" maxlength="32" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="e.g. WP ABC 0123"><button type="submit" class="action">Save</button></div></form>
         <section class="panel-section"><div class="setting-caption">Display mode</div><div class="segmented" aria-label="Display mode">${['auto', 'day', 'night'].map(mode => `<button type="button" data-theme="${mode}" aria-pressed="${config.theme === mode}">${mode.charAt(0).toUpperCase() + mode.slice(1)}</button>`).join('')}</div></section>
         <section class="panel-section"><label for="limit">Speed alert <output id="limit-value">${config.limit} km/h</output></label><input type="range" id="limit" min="20" max="140" value="${config.limit}"><label class="check-row" for="alert">Speak when the limit is reached<input type="checkbox" id="alert" ${config.alert ? 'checked' : ''}></label></section>
         <section class="panel-section"><label for="demo-speed">Simulated GPS speed <output id="speed-value">${demoSpeed} km/h</output></label><input type="range" id="demo-speed" min="0" max="160" value="${demoSpeed}"></section>
         <div class="actions"><button type="button" class="action" data-action="warning">Preview warning voice</button><button type="button" class="action" data-action="reset">Reset trip</button><a id="apk" class="action primary" href="${apkUrl}" data-apk download hidden>${icon('download')} Android APK</a></div><section class="panel-section"><div class="setting-caption">Power cues</div><label class="check-row" for="power-tones">Welcome and Good Bye tones<input id="power-tones" type="checkbox" ${config.powerTones ? 'checked' : ''}></label><div class="actions"><button type="button" class="action" data-action="startup">Preview Welcome</button><button type="button" class="action" data-action="goodbye">Preview Good Bye</button></div><p class="panel-note">These previews don’t change Android power. Automatic key-off depends on the head unit.</p></section><p id="apk-missing" class="panel-note" hidden>The APK is not available yet. Build it from the Android project to enable the download.</p>`;
       updateApkLinks();
       checkApk();
+      const registration = $('registration-input');
+      registration.value = config.registration;
+      registration.addEventListener('input', () => registration.setCustomValidity(''));
+      $('registration-form').addEventListener('submit', event => {
+        event.preventDefault();
+        const label = normalizeRegistration(registration.value);
+        if (registration.value.trim() && !label) {
+          registration.setCustomValidity('Use two blocks and an optional province, e.g. WP ABC 0123.');
+          registration.reportValidity();
+          return;
+        }
+        config.registration = label;
+        registration.value = label;
+        save(); renderAppearance(); toast(label ? 'Registration label saved.' : 'Registration label hidden.');
+      });
       $('limit').addEventListener('input', e => { config.limit = Number(e.target.value); $('limit-value').textContent = `${config.limit} km/h`; save(); renderGauge(true); });
       $('alert').addEventListener('change', e => {
         config.alert = e.target.checked;
@@ -342,12 +370,13 @@ function renderProvider() {
   body.querySelectorAll('[data-provider]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.provider === config.provider)));
 }
 document.addEventListener('click', e => {
-  const button = e.target.closest('[data-panel],[data-theme],[data-track],[data-provider],[data-action]');
+  const button = e.target.closest('[data-panel],[data-theme],[data-gauge],[data-track],[data-provider],[data-action]');
   if (!button) return;
   const data = button.dataset;
   if (data.appProvider) { config.provider = data.appProvider; save(); }
   if (data.panel) show(data.panel);
   if (data.theme) { config.theme = data.theme; save(); renderAppearance(); }
+  if (data.gauge) { config.gauge = data.gauge; save(); renderAppearance(); }
   if (data.track !== undefined) chooseTrack(Number(data.track), true);
   if (data.provider) { config.provider = data.provider; save(); renderProvider(); }
   if (data.action === 'startup') greeting();
