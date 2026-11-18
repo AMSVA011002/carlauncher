@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120">
+  <defs>
+    <linearGradient id="sky" x2="0" y2="1" gradientUnits="objectBoundingBox"><stop stop-color="#251325"/><stop offset=".58" stop-color="#754256"/><stop offset="1" stop-color="#e3976d"/></linearGradient>
+    <linearGradient id="ocean" x2="0" y2="1" gradientUnits="objectBoundingBox"><stop stop-color="#703d46"/><stop offset="1" stop-color="#130f20"/></linearGradient>
+    <linearGradient id="orb" x2=".3" y2="1" gradientUnits="objectBoundingBox"><stop stop-color="#ffdf9e"/><stop offset="1" stop-color="#cb755c"/></linearGradient>
+  </defs>
+  <path fill="url(#sky)" d="M0 0h120v120H0z"/>
+  <path fill="#f8c69b" opacity=".75" d="M18 21h1v1h-1zm78 17h1v1h-1zM37 15h1.5v1.5H37zm49 7h1v1h-1zM71 14h1v1h-1zM99 51h1v1h-1z"/>
+  <circle cx="60" cy="50" r="23" fill="url(#orb)"/>
+  <path d="M0 70h120v50H0z" fill="url(#ocean)"/>
+  <path d="M0 64l13-5 9 3 12 8H0Zm89 6 10-4 8-8 13 1v11Z" fill="#43263a"/>
+  <path d="M0 71h120M37 79h48m-44 7h36m-50 8h18m5 0h31m-25 8h23m-29 9h14m19-24h7m-52 21h10m16-32h11" stroke="#ffb388" stroke-width="1.4" stroke-linecap="round" opacity=".68"/>
+</svg>
