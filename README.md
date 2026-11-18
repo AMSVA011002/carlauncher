@@ -34,7 +34,7 @@ bash tests/run.sh
 bash tools/build-apk.sh
 ```
 
-The build script runs the Gradle wrapper, checks the APK signature, alignment, Android API levels and bundled assets, then writes `artifacts/Vezel-Drive-Console.apk` and its `.sha256` checksum. GitHub Actions uses the same command and publishes both files as a workflow artifact. You can also build normally with `./gradlew :app:assembleDebug` or Android Studio.
+The build script runs the Gradle wrapper, checks the APK signature, alignment, Android API levels and bundled assets, then writes `artifacts/Vezel-Drive-Console.apk` and its `.sha256` checksum. GitHub Actions runs the SDK-only build and saves the APK and checksum as a workflow artifact. To publish a new version, run the **Android** workflow from the desired branch with **Publish the verified APK to GitHub Releases** enabled. The version from `app/build.gradle` is used as the release tag; existing releases are not overwritten. You can also build normally with `./gradlew :app:assembleDebug` or Android Studio.
 
 For this dependency-free launcher, `bash tools/build-apk.sh --sdk-only` can package directly using the installed Android SDK and JDK, without downloading Gradle dependencies. It uses the standard local Android development key (`~/.android/debug.keystore`), or an existing **development** key at `VEZEL_DEBUG_KEYSTORE`. Do not commit signing keys. Android requires the same signer to install an update; a differently signed build requires uninstalling the previous build, clearing its settings and trip. Install a same-signer update with `adb install -r artifacts/Vezel-Drive-Console.apk` if using ADB.
 

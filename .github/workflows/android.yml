@@ -4,27 +4,80 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+    inputs:
+      publish_release:
+        description: Publish the verified APK to GitHub Releases
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.metadata.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
-      - uses: android-actions/setup-android@v3
-      - run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+      # Ubuntu 24.04 runners already have Android Platform 35 and Build Tools 35.0.0.
       - run: bash tests/run.sh
-      - run: bash tools/build-apk.sh
-      - uses: actions/upload-artifact@v4
+      - run: bash tools/build-apk.sh --sdk-only
+      - name: Read APK version
+        id: metadata
+        run: |
+          version=$(awk '$1 == "versionName" { gsub(/\047/, "", $2); print $2; exit }' app/build.gradle)
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v6
         with:
           name: Vezel-Drive-Console
           path: |
             artifacts/Vezel-Drive-Console.apk
             artifacts/Vezel-Drive-Console.apk.sha256
           if-no-files-found: error
+
+  publish:
+    if: github.event_name == 'workflow_dispatch' && inputs.publish_release
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    concurrency:
+      group: apk-release-${{ needs.build.outputs.version }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: Vezel-Drive-Console
+          path: artifacts
+      - name: Publish APK and checksum
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          set -euo pipefail
+          cd artifacts
+          sha256sum -c Vezel-Drive-Console.apk.sha256
+          tag="v$VERSION"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::Release $tag already exists. Published assets are not overwritten."
+            exit 1
+          fi
+          gh release create "$tag" Vezel-Drive-Console.apk Vezel-Drive-Console.apk.sha256 \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease \
+            --title "Vezel Drive Console $VERSION" --notes-file - <<'NOTES'
+          ### Android APK
+
+          Download `Vezel-Drive-Console.apk` under Assets. This development-signed build is for sideloading on Android 6.0 or newer (API 23+), including ARMv7 head units. The SHA-256 checksum is included as a separate asset.
+
+          Install while parked. Open **Setup** on the dashboard to select the Home app and grant precise GPS and notification access. Automatic headlight sync depends on your head unit’s firmware; manual headlight and night display controls are available.
+
+          If Android rejects an update over an earlier sideload, the signing keys differ. Uninstall the old version first (this clears its settings and trip), then install this APK.
+          NOTES
