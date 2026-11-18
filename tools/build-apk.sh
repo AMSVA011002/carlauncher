@@ -4,18 +4,32 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 usage() {
-  echo 'Usage: tools/build-apk.sh [--sdk-only]'
-  echo 'Default: build with the Gradle wrapper. --sdk-only: use JDK + Android SDK CLI tools directly.'
+  echo 'Usage: tools/build-apk.sh [--sdk-only] [--personal]'
+  echo 'Default: Gradle wrapper, generic plates. --sdk-only uses the Android SDK CLI tools.'
+  echo '--personal includes the Git-ignored plate atlas and writes only to artifacts/private/.'
 }
 
 fail() { printf 'APK build: %s\n' "$*" >&2; exit 1; }
-case "${1:-}" in
-  '') direct=false ;;
-  --sdk-only) direct=true ;;
-  --help|-h) usage; exit 0 ;;
-  *) usage >&2; exit 2 ;;
-esac
-[[ $# -le 1 ]] || fail 'expected at most one argument'
+direct=false
+personal=false
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --sdk-only) direct=true ;;
+    --personal) personal=true ;;
+    --help|-h) usage; exit 0 ;;
+    *) usage >&2; exit 2 ;;
+  esac
+  shift
+done
+assets=(-A shared)
+gradle_flags=()
+destination=artifacts
+if "$personal"; then
+  [[ -f private-assets/vehicle/local-decals.png ]] || fail 'generate your local decals with tools/generate_vehicle.py first'
+  assets+=(-A private-assets)
+  gradle_flags+=(-PpersonalVehicle=true)
+  destination=artifacts/private
+fi
 
 # Keep SDK and version values in the Android build file for both build modes.
 gradle_value() { awk -v key="$1" '$1 == key { gsub(/[\047\042]/, "", $2); print $2; exit }' app/build.gradle; }
@@ -61,8 +75,8 @@ if "$direct"; then
   "$bt/aapt2" compile --dir app/src/main/res -o "$work/resources.zip"
   "$bt/aapt2" link --manifest "$work/AndroidManifest.xml" --custom-package "$namespace" \
     -I "$android_jar" --min-sdk-version "$min_sdk" --target-sdk-version "$target_sdk" \
-    --version-code "$version_code" --version-name "$version" --java "$work/java" \
-    -A app/src/main/assets -A shared -o "$work/unsigned.apk" "$work/resources.zip"
+    --version-code "$version_code" --version-name "$version" --java "$work/java" -0 mp3 -0 wav \
+    -A app/src/main/assets "${assets[@]}" -o "$work/unsigned.apk" "$work/resources.zip"
   sources=()
   while IFS= read -r -d '' file; do sources+=("$file"); done < <(find "$work/java" app/src/main/java -name '*.java' -print0)
   "$javac" -source 8 -target 8 -encoding UTF-8 -proc:none -bootclasspath "$lambda_stubs:$android_jar" \
@@ -87,7 +101,7 @@ if "$direct"; then
     --key-pass pass:android --min-sdk-version "$min_sdk" --v4-signing-enabled false \
     --out "$apk" "$work/aligned.apk"
 else
-  ./gradlew --no-daemon :app:assembleDebug
+  ./gradlew --no-daemon "${gradle_flags[@]}" :app:assembleDebug
   apk=app/build/outputs/apk/debug/app-debug.apk
 fi
 
@@ -101,19 +115,30 @@ badging=$("$bt/aapt2" dump badging "$apk")
    $badging == *"targetSdkVersion:'$target_sdk'"* ]] || fail 'APK Android API level mismatch'
 [[ $badging == *'DashboardActivity'* && $badging == *"provides-component:'launcher'"* ]] || fail 'Home launcher activity not packaged'
 entries=$(unzip -Z1 "$apk")
-for entry in classes.dex assets/fonts/instrument.ttf assets/vezel-off.jpg assets/vezel-on.jpg; do
+for entry in classes.dex assets/fonts/instrument.ttf assets/vezel-off.jpg assets/vezel-on.jpg \
+  assets/vehicle/vezel.mesh assets/vehicle/decals.png assets/vehicle/showroom.vert assets/vehicle/showroom.frag \
+  assets/audio/speed-warning.mp3 assets/audio/welcome.wav assets/audio/goodbye.wav; do
   grep -Fxq "$entry" <<< "$entries" || fail "missing $entry"
 done
+# MediaPlayer uses AssetManager.openFd, which requires an uncompressed audio entry.
+archive=$(unzip -lv "$apk")
+for clip in speed-warning.mp3 welcome.wav goodbye.wav; do
+  awk -v file="assets/audio/$clip" '$NF == file && $2 == "Stored" { found=1 } END { exit !found }' <<< "$archive" \
+    || fail "audio clip must be stored without compression: $clip"
+done
+has_personal=false
+if grep -Fxq 'assets/vehicle/local-decals.png' <<< "$entries"; then has_personal=true; fi
+[[ "$has_personal" == "$personal" ]] || fail 'APK does not match the requested number plate edition'
 
 name=Vezel-Drive-Console.apk
-mkdir -p artifacts
-publish=$(mktemp -d "$PWD/artifacts/.apk-build.XXXXXX")
+mkdir -p "$destination"
+publish=$(mktemp -d "$PWD/$destination/.apk-build.XXXXXX")
 cp "$apk" "$publish/$name"
 if command -v sha256sum >/dev/null; then
   (cd "$publish" && sha256sum "$name" > "$name.sha256")
 else
   (cd "$publish" && shasum -a 256 "$name" > "$name.sha256")
 fi
-mv -f "$publish/$name" "$publish/$name.sha256" artifacts/
+mv -f "$publish/$name" "$publish/$name.sha256" "$destination/"
 printf '\nBuilt Vezel Drive Console %s (version code %s, Android API %s+)\n' "$version" "$version_code" "$min_sdk"
-printf 'APK:      %s/artifacts/%s\nChecksum: %s/artifacts/%s.sha256\n' "$PWD" "$name" "$PWD" "$name"
+printf 'APK:      %s/%s/%s\nChecksum: %s/%s/%s.sha256\n' "$PWD" "$destination" "$name" "$PWD" "$destination" "$name"

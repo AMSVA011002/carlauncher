@@ -12,9 +12,9 @@ final class TripMeter {
     private double meters;
     private long movingMs;
     private int limit = 60;
-    private boolean chimeEnabled = true;
+    private boolean alertEnabled = true;
     private boolean latched;
-    private int overSamples;
+    private int limitSamples;
 
     static final class Fix {
         final long timeMs;
@@ -37,11 +37,11 @@ final class TripMeter {
 
     void alert(int newLimit, boolean enabled) {
         newLimit = Math.max(20, Math.min(140, newLimit));
-        if (newLimit != limit || enabled != chimeEnabled) {
+        if (newLimit != limit || enabled != alertEnabled) {
             limit = newLimit;
-            chimeEnabled = enabled;
+            alertEnabled = enabled;
             latched = false;
-            overSamples = 0;
+            limitSamples = 0;
         }
     }
 
@@ -73,15 +73,15 @@ final class TripMeter {
                 movingMs += interval;
             }
         }
-        if (!linked || nextKmh < 0) overSamples = 0;
+        if (!linked || nextKmh < 0) limitSamples = 0;
         previous = fix;
         lastFix = fix.timeMs;
         kmh = nextKmh;
 
-        if (!chimeEnabled || kmh < 0) return false;
-        if (kmh <= limit - 4) latched = false;
-        if (kmh <= limit) { overSamples = 0; return false; }
-        if (!latched && ++overSamples >= 2) {
+        if (!alertEnabled || kmh < 0) return false;
+        if (Math.round(kmh) <= limit - 4) latched = false;
+        if (Math.round(kmh) < limit) { limitSamples = 0; return false; }
+        if (!latched && ++limitSamples >= 2) {
             latched = true;
             return true;
         }
@@ -91,7 +91,7 @@ final class TripMeter {
     boolean hasFix(long now) { return lastFix >= 0 && now >= lastFix && now - lastFix <= STALE_MS; }
     int speed(long now) { return hasFix(now) && kmh >= 0 ? (int) Math.round(kmh) : -1; }
     int heading(long now) { return hasFix(now) ? heading : -1; }
-    boolean overLimit(long now) { return chimeEnabled && hasFix(now) && kmh > limit; }
+    boolean limitReached(long now) { return alertEnabled && speed(now) >= limit; }
     double meters() { return meters; }
     long movingMs() { return movingMs; }
 
@@ -100,7 +100,7 @@ final class TripMeter {
         lastFix = -1;
         kmh = -1;
         heading = -1;
-        overSamples = 0;
+        limitSamples = 0;
     }
 
     void reset() {

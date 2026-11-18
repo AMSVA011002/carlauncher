@@ -43,7 +43,10 @@
           </svg>
           <div class="speed-reading"><span id="speed">50</span><span>km/h</span></div>
         </div>
-        <button class="limit-button" type="button" data-panel="settings" title="Set speed alert"><span class="limit-sign" id="limit-sign">60</span><span>SPEED ALERT</span></button>
+        <button class="limit-button" type="button" data-panel="settings" title="Set speed alert">
+          <span class="limit-normal" id="limit-normal"><span class="limit-sign" id="limit-sign">60</span><span>SPEED ALERT</span></span>
+          <span class="limit-warning" id="limit-warning" hidden><svg class="icon" aria-hidden="true"><use href="/icons.svg#warning"></use></svg><span><b>LIMIT REACHED</b><small id="warning-detail">60 km/h · Slow down</small></span></span>
+        </button>
         <div class="trip">
           <div class="trip-stat"><div class="eyebrow">TRIP DISTANCE</div><b id="trip">0.4</b><span> km</span></div>
           <div class="trip-stat"><div class="eyebrow">DRIVE TIME</div><b id="drive">21:51</b></div>
@@ -53,9 +56,11 @@
 
       <section class="vehicle" aria-label="Honda Vezel in Wine Red">
         <div class="vehicle-scene" aria-hidden="true">
-          <img class="scene-off" src="/shared/vezel-off.jpg" alt="" width="864" height="502">
-          <img class="scene-on" src="/shared/vezel-on.jpg" alt="" width="864" height="502">
+          <img class="scene-off" src="/shared/vezel-off.jpg" alt="" width="864" height="488">
+          <img class="scene-on" src="/shared/vezel-on.jpg" alt="" width="864" height="488">
         </div>
+        <canvas class="vehicle-model" id="vehicle-model" tabindex="-1" aria-hidden="true"
+          aria-label="Honda Vezel 3D model. Drag or use arrow keys to rotate. Pinch or use plus and minus to zoom. Home resets the view."></canvas>
         <div class="vehicle-shade" aria-hidden="true"></div>
         <div class="vehicle-title">
           <span class="eyebrow vehicle-kicker"><i></i> VEHICLE PROFILE</span>
@@ -69,7 +74,11 @@
         </button>
         <div class="vehicle-footer">
           <span class="paint"><i></i><span><small>EXTERIOR</small><b>Wine Red</b></span></span>
-          <button class="headlight-button" type="button" id="lamps" aria-pressed="true" title="Toggle vehicle lights"><svg class="icon" aria-hidden="true"><use href="/icons.svg#headlights"></use></svg><span id="light-label">HEADLIGHTS ON</span></button>
+          <button class="vehicle-expand" type="button" id="vehicle-expand" aria-haspopup="dialog" aria-label="Inspect the 3D car" hidden>
+            <span class="orbit-label">360°</span><span class="orbit-hint">DRAG TO ROTATE</span><span class="orbit-divider"></span><span>Inspect</span>
+            <svg class="icon" aria-hidden="true" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.35"><path d="M9 3h4v4M13 3 9 7M7 13H3V9m0 4 4-4"/></svg>
+          </button>
+          <button class="headlight-button" type="button" id="lamps" aria-pressed="true" title="Toggle illustrated headlights and fog lights"><svg class="icon" aria-hidden="true"><use href="/icons.svg#headlights"></use></svg><span id="light-label">LIGHTS + FOG ON</span></button>
         </div>
       </section>
     </div>
@@ -101,10 +110,37 @@
         <a class="footer-apk" href="/download/Vezel-Drive-Console.apk" data-apk download hidden><svg class="icon" aria-hidden="true"><use href="/icons.svg#download"></use></svg>Download APK</a>
       </span>
     </footer>
-    <div class="welcome" id="welcome" hidden role="status" aria-label="Honda startup animation">
-      <div class="welcome-center"><img src="/shared/honda-gold.svg" alt="Honda"><strong>HONDA</strong><span>VEZEL DRIVE CONSOLE</span></div>
+    <section id="apps-page" class="apps-page" aria-labelledby="apps-heading" hidden>
+      <header class="apps-header">
+        <span class="mark"><img src="/shared/honda.svg" alt="Honda"></span>
+        <div class="apps-headings"><span class="eyebrow">VEZEL / APPLICATIONS</span><h1 id="apps-heading" tabindex="-1">All apps</h1></div>
+        <label class="apps-search"> <svg class="icon" aria-hidden="true"><use href="/icons.svg#search"></use></svg><input id="apps-search" type="search" autocomplete="off" aria-label="Find an app" placeholder="Find an app"></label>
+        <button class="action" id="apps-back" type="button"><svg class="icon" aria-hidden="true"><use href="/icons.svg#back"></use></svg>Dashboard</button>
+      </header>
+      <div class="apps-meta eyebrow"><span id="apps-count" aria-live="polite"></span><span>SIMULATOR / SAMPLE APPS</span></div>
+      <div id="apps-grid" class="apps-grid"></div>
+      <p class="apps-empty" id="apps-empty" hidden>No apps match your search.</p>
+      <footer class="apps-footer eyebrow">YOUR INSTALLED HEAD UNIT APPS APPEAR HERE IN THE ANDROID LAUNCHER</footer>
+    </section>
+    <div class="welcome" id="welcome" hidden role="status">
+      <div class="welcome-center"><img src="/shared/honda-gold.svg" alt="Honda"><strong id="greeting">Welcome</strong><span>HONDA / VEZEL</span></div>
     </div>
   </main>
+  <dialog id="vehicle-inspector" aria-labelledby="inspection-title">
+    <div id="vehicle-studio" class="inspection-scene"></div>
+    <header class="inspection-header">
+      <div><span class="eyebrow vehicle-kicker"><i></i> VEHICLE INSPECTION</span><h2 id="inspection-title">Honda Vezel</h2><span class="eyebrow variant">2014 <i>/</i> HYBRID RU3</span></div>
+      <button id="vehicle-close" class="night-button" type="button" aria-label="Close vehicle inspection"><svg class="icon" aria-hidden="true"><use href="/icons.svg#close"></use></svg></button>
+    </header>
+    <footer class="inspection-footer">
+      <p>Drag to rotate <i>·</i> Pinch or scroll to zoom</p>
+      <div id="vehicle-controls" aria-label="Vehicle views">
+        <button class="action" type="button" data-vehicle-view="front">Front</button>
+        <button class="action" type="button" data-vehicle-view="rear">Rear</button>
+        <button class="action" type="button" data-vehicle-view="reset">Reset view</button>
+      </div>
+    </footer>
+  </dialog>
   <dialog id="panel" aria-labelledby="panel-title">
     <div class="panel-frame">
       <header class="panel-header"><div><span class="eyebrow" id="panel-kicker">DRIVE CONSOLE</span><h2 id="panel-title">Settings</h2></div><button id="panel-close" class="night-button" type="button" aria-label="Close panel"><svg class="icon" aria-hidden="true"><use href="/icons.svg#close"></use></svg></button></header>

@@ -12,3 +12,5 @@ artifacts/
 *.pkcs12
 *.class
 __pycache__/
+# Personal number plate atlas, generated on request for a private build only.
+/private-assets/

@@ -6,6 +6,7 @@
     <uses-feature android:name="android.hardware.location" android:required="false"/>
     <uses-feature android:name="android.hardware.location.gps" android:required="false"/>
     <uses-feature android:name="android.hardware.touchscreen" android:required="false"/>
+    <uses-feature android:glEsVersion="0x00020000" android:required="false"/>
     <queries>
         <package android:name="com.google.android.apps.maps"/>
         <package android:name="com.waze"/>
@@ -52,6 +53,10 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <activity
+            android:name=".AppsActivity"
+            android:exported="false"
+            android:screenOrientation="sensorLandscape"/>
         <service
             android:name=".DriveNotifications"
             android:exported="true"

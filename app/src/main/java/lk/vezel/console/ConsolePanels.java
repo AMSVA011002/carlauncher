@@ -63,7 +63,7 @@ final class ConsolePanels {
             int next = index == 1 ? 2 : index == 2 ? 1 : 0;
             activity.prefs.edit().putInt(DashboardActivity.MODE, next).apply(); activity.appearance();
         });
-        section(s.body, "Headlight illustration");
+        section(s.body, "Headlights and fog lights illustration");
         choices(s.body, new String[]{"Follow source", "On", "Off"}, activity.prefs.getInt(DashboardActivity.LAMPS, 0), index -> {
             activity.prefs.edit().putInt(DashboardActivity.LAMPS, index).apply(); activity.appearance();
         });
@@ -88,10 +88,11 @@ final class ConsolePanels {
         assignment(s.body, "Music", "shortcut_music");
         assignment(s.body, "Phone", "shortcut_phone");
         assignment(s.body, "Radio", "shortcut_radio");
-        section(s.body, "Weather & startup");
+        section(s.body, "Welcome & Good Bye");
+        button(s.body, "Start and key-off cues", false, this::powerCues);
+        section(s.body, "Weather");
         toggle(s.body, "Weather from Open-Meteo", activity.weather.enabled(), activity::toggleWeather);
         note(s.body, "Weather uses rounded coordinates. Without location, the default is Colombo.");
-        button(s.body, "Replay gold Honda startup", false, () -> { dismiss(); activity.replayWelcome(); });
         show(s);
     }
 
@@ -122,7 +123,7 @@ final class ConsolePanels {
 
     void speed() {
         Shell s = shell("GPS SPEED", "Speed alert", true);
-        note(s.body, "Choose your own threshold. A quiet chime sounds after two GPS samples over it. It is not a road speed-limit reading.");
+        note(s.body, "Choose your own threshold. The warning symbol appears at that speed and the spoken warning plays once after two GPS samples at or above it. This is not a road speed-limit reading.");
         int[] value = {activity.limit()};
         boolean[] enabled = {activity.alertEnabled()};
         TextView count = text(value[0] + " km/h", 28, AMBER, true);
@@ -141,7 +142,8 @@ final class ConsolePanels {
             @Override public void onStartTrackingTouch(SeekBar bar) {}
             @Override public void onStopTrackingTouch(SeekBar bar) {}
         });
-        toggle(s.body, "Play a gentle speed chime", enabled[0], checked -> enabled[0] = checked);
+        toggle(s.body, "Enable speed warning", enabled[0], checked -> enabled[0] = checked);
+        button(s.body, "Preview warning voice", false, activity::previewWarning);
         button(s.body, "Save speed alert", true, () -> { activity.setAlert(value[0], enabled[0]); dismiss(); });
         show(s);
     }
@@ -204,8 +206,37 @@ final class ConsolePanels {
         show(s);
     }
 
+    private void powerCues() {
+        Shell s = shell("IGNITION & POWER", "Welcome & Good Bye", true);
+        note(s.body, "Welcome plays when the launcher opens after Android boots. Good Bye can play before power-off if the screen is still on and the head unit sends a notification in time.");
+        toggle(s.body, "Play Welcome and Good Bye tones", activity.powerTones(), activity::setPowerTones);
+        button(s.body, "Preview Welcome", true, () -> { dismiss(); activity.replayWelcome(); });
+        button(s.body, "Preview Good Bye (screen only)", false, () -> { dismiss(); activity.replayGoodbye(); });
+        section(s.body, "Optional key-off signal");
+        note(s.body, activity.ignitionStatus());
+        note(s.body, "Full shutdown instead of sleep must be set in your head unit's own power settings, if available. The launcher does not power it off.");
+        note(s.body, "Use only the documented ACC broadcast and state extra (1/on or 0/off). A vendor app sender also needs its documented signature-level sender permission. Leave all empty if unknown.");
+        EditText action = field("ACC broadcast action", activity.prefs.getString(DashboardActivity.ACC_ACTION, ""));
+        EditText extra = field("ACC state extra", activity.prefs.getString(DashboardActivity.ACC_EXTRA, ""));
+        EditText permission = field("Sender permission (vendor-app broadcasts)", activity.prefs.getString(DashboardActivity.ACC_PERMISSION, ""));
+        s.body.addView(action, withMargin(5, dp(44)));
+        s.body.addView(extra, withMargin(6, dp(44)));
+        s.body.addView(permission, withMargin(6, dp(44)));
+        button(s.body, "Save key-off source", true, () -> {
+            String a = action.getText().toString().trim(), e = extra.getText().toString().trim(), p = permission.getText().toString().trim();
+            if (a.isEmpty() && e.isEmpty() && p.isEmpty()) { activity.setIgnition("", "", ""); powerCues(); return; }
+            if (!PowerCue.validAction(a) || a.equals(Intent.ACTION_SHUTDOWN) || a.equals(Intent.ACTION_SCREEN_ON) || a.equals(Intent.ACTION_SCREEN_OFF)) {
+                action.setError("Enter the OEM ACC broadcast action, not an Android screen or shutdown event"); return;
+            }
+            if (!PowerCue.validExtra(e)) { extra.setError("Enter the OEM state extra"); return; }
+            if (!p.isEmpty() && !PowerCue.validAction(p)) { permission.setError("Enter the documented permission name"); return; }
+            activity.setIgnition(a, e, p); powerCues();
+        });
+        show(s);
+    }
+
     void drawer(String title, String assignment) {
-        Shell s = shell(assignment == null ? "QUICK LAUNCH" : "ANDROID SHORTCUT", title, false);
+        Shell s = shell("ANDROID SHORTCUT", title, false);
         EditText search = field("Find an installed app", "");
         s.body.addView(search, withMargin(13, dp(43)));
         List<AppShortcuts.Entry> all = activity.apps.list();
@@ -230,12 +261,10 @@ final class ConsolePanels {
         list.setOnItemClickListener((parent, view, position, id) -> {
             AppShortcuts.Entry entry = items.getItem(position);
             dismiss();
-            if (assignment != null) {
-                activity.prefs.edit().putString(assignment, entry.pkg).apply();
-                activity.toast(entry.name + " shortcut saved.");
-            } else if (!activity.apps.launch(entry)) activity.toast("This app could not be opened.");
+            activity.prefs.edit().putString(assignment, entry.pkg).apply();
+            activity.toast(entry.name + " shortcut saved.");
         });
-        if (assignment != null) button(s.body, "Clear shortcut assignment", false, () -> {
+        button(s.body, "Clear shortcut assignment", false, () -> {
             activity.prefs.edit().remove(assignment).apply(); dismiss(); activity.toast("Shortcut assignment cleared.");
         });
         show(s);

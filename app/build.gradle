@@ -11,12 +11,20 @@ android {
         applicationId 'lk.vezel.console'
         minSdk 23
         targetSdk 34
-        versionCode 2
-        versionName '1.0.1'
+        versionCode 4
+        versionName '1.2.0'
     }
 
     sourceSets {
-        main.assets.srcDirs += [rootProject.file('shared')]
+        main.assets.srcDir rootProject.file('shared')
+        if (providers.gradleProperty('personalVehicle').orNull == 'true') {
+            main.assets.srcDir rootProject.file('private-assets')
+        }
+    }
+
+    androidResources {
+        // The audio cues are played directly from their APK file descriptors.
+        noCompress += ['mp3', 'wav']
     }
 
     compileOptions {
