@@ -25,7 +25,6 @@ import android.os.SystemClock;
 import android.provider.Settings;
 import android.text.format.DateFormat;
 import android.view.KeyEvent;
-import android.view.WindowManager;
 import android.widget.Toast;
 
 import java.io.BufferedReader;
@@ -38,8 +37,8 @@ import java.util.Locale;
 
 public final class DashboardActivity extends Activity implements LocationListener {
     private static final int LOCATION_REQUEST = 31, HOME_REQUEST = 32;
-    static final String SETTINGS_NAME = "vezel_settings", MODE = "display_mode", LAMPS = "light_mode",
-            OEM_ACTION = "illumination_action", OEM_EXTRA = "illumination_extra", LIMIT = "speed_limit", ALERT = "speed_alert",
+    static final String SETTINGS_NAME = "vezel_settings", BT_AUDIO = "shortcut_bt_audio",
+            LIMIT = "speed_limit", ALERT = "speed_alert",
             ACC_ACTION = "ignition_action", ACC_EXTRA = "ignition_extra", ACC_PERMISSION = "ignition_permission",
             POWER_TONES = "power_tones";
     private static final String DIAL_GAUGE = "dial_gauge", REGISTRATION = "registration_label";
@@ -48,17 +47,17 @@ public final class DashboardActivity extends Activity implements LocationListene
     AppShortcuts apps;
     MediaBridge media;
     WeatherClient weather;
+    HeadlightSync lights;
+    private final Runnable appearanceChanged = this::appearance;
     private LocationManager locations;
     private DashboardView dashboard;
     private ConsolePanels panels;
     private TripMeter trip;
-    private DriveNotifications.Route route;
     private boolean started, working, gpsListening, providerEnabled, screenRegistered, destroyed;
     private long offAt = -1, wakeUntil = -1, saveAt = -1, clockMinute = -1;
     private int previousSpeed = -2;
     private boolean previousFix, clock24, homeSelected;
-    private BroadcastReceiver lightReceiver, ignitionReceiver;
-    private Boolean firmwareLamps;
+    private BroadcastReceiver ignitionReceiver;
     private DriveAudio audio;
     private final PowerCue ignition = new PowerCue();
     private boolean welcomePending, shuttingDown;
@@ -109,6 +108,7 @@ public final class DashboardActivity extends Activity implements LocationListene
         super.onCreate(saved);
         prefs = getSharedPreferences(SETTINGS_NAME, MODE_PRIVATE);
         apps = new AppShortcuts(this);
+        lights = HeadlightSync.get(this);
         audio = new DriveAudio(this);
         setVolumeControlStream(AudioManager.STREAM_MUSIC);
         welcomePending = saved == null;
@@ -117,7 +117,7 @@ public final class DashboardActivity extends Activity implements LocationListene
         trip.alert(limit(), alertEnabled());
         locations = getSystemService(LocationManager.class);
         dashboard = new DashboardView(this, this::dispatch);
-        dashboard.data.dialGauge = prefs.getBoolean(DIAL_GAUGE, false);
+        dashboard.data.dialGauge = prefs.getBoolean(DIAL_GAUGE, true);
         dashboard.data.registration = prefs.contains(REGISTRATION)
                 ? VehicleRegistration.normalize(prefs.getString(REGISTRATION, "")) : bundledRegistration();
         media = new MediaBridge(this, prefs, this::render);
@@ -134,7 +134,6 @@ public final class DashboardActivity extends Activity implements LocationListene
             registerPrivate(screen, filter);
             screenRegistered = true;
         } catch (RuntimeException ignored) { /* Full cold startup still works. */ }
-        bindLightSource();
         bindIgnition();
         appearance();
         render();
@@ -160,7 +159,6 @@ public final class DashboardActivity extends Activity implements LocationListene
         if (working) {
             startGps();
             media.refresh();
-            updateRoute();
         }
         render();
     }
@@ -174,9 +172,9 @@ public final class DashboardActivity extends Activity implements LocationListene
 
     @Override protected void onDestroy() {
         destroyed = true;
+        lights.unwatch(appearanceChanged);
         if (panels != null) panels.dismiss();
         if (screenRegistered) unregisterQuietly(screen);
-        if (lightReceiver != null) unregisterQuietly(lightReceiver);
         if (ignitionReceiver != null) unregisterQuietly(ignitionReceiver);
         main.removeCallbacksAndMessages(null);
         audio.stop();
@@ -241,17 +239,16 @@ public final class DashboardActivity extends Activity implements LocationListene
         if (working == on || (on && shuttingDown)) return;
         working = on;
         if (on) {
-            DriveNotifications.watch(this::updateRoute);
+            lights.watch(appearanceChanged);
             media.start();
             startGps();
             weather.refresh(false);
-            updateRoute();
             main.removeCallbacks(pulse);
             main.postDelayed(pulse, 1_000L);
         } else {
+            lights.unwatch(appearanceChanged);
             main.removeCallbacks(pulse);
             main.removeCallbacks(resumeAfterWelcome);
-            DriveNotifications.watch(null);
             media.stop();
             media.cancelResume();
             stopGps();
@@ -360,11 +357,6 @@ public final class DashboardActivity extends Activity implements LocationListene
         render();
     }
 
-    private void updateRoute() {
-        route = DriveNotifications.isAllowed(this) ? DriveNotifications.route() : null;
-        render();
-    }
-
     void notificationSetup() {
         if (!apps.start(new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))) toast("Notification access is not available on this firmware.");
     }
@@ -384,54 +376,15 @@ public final class DashboardActivity extends Activity implements LocationListene
         if (!apps.start(new Intent(Settings.ACTION_HOME_SETTINGS))) toast("Choose Vezel Drive Console in Android Default apps → Home app, if supported.");
     }
 
-    void setIllumination(String action, String key) {
-        prefs.edit().putString(OEM_ACTION, action).putString(OEM_EXTRA, key).apply();
-        bindLightSource();
-        appearance();
-    }
-
-    private void bindLightSource() {
-        if (lightReceiver != null) { unregisterQuietly(lightReceiver); lightReceiver = null; }
-        firmwareLamps = null;
-        String action = prefs.getString(OEM_ACTION, ""), key = prefs.getString(OEM_EXTRA, "");
-        if (action.isEmpty() || key.isEmpty()) return;
-        lightReceiver = new BroadcastReceiver() {
-            @Override public void onReceive(Context context, Intent intent) {
-                if (intent == null || !action.equals(intent.getAction())) return;
-                try {
-                    Bundle extras = intent.getExtras();
-                    Boolean value = extras == null ? null : LightSignal.read(extras.get(key));
-                    if (value != null) { firmwareLamps = value; appearance(); }
-                } catch (RuntimeException ignored) { /* Untrusted advisory broadcast input; ignore unexpected extras. */ }
-            }
-        };
-        try {
-            IntentFilter filter = new IntentFilter(action);
-            if (Build.VERSION.SDK_INT >= 33) registerReceiver(lightReceiver, filter, Context.RECEIVER_EXPORTED);
-            else registerReceiver(lightReceiver, filter);
-        } catch (RuntimeException ignored) { lightReceiver = null; toast("This illumination broadcast could not be registered."); }
-    }
-
     private void unregisterQuietly(BroadcastReceiver receiver) {
-        try { unregisterReceiver(receiver); } catch (RuntimeException ignored) {}
+        try { unregisterReceiver(receiver); } catch (RuntimeException ignored) { }
     }
 
-    String lightSource() {
-        if (prefs.getInt(LAMPS, 0) != 0) return "Manual override: the launcher never controls the real lamps.";
-        if (firmwareLamps != null) return "Using the configured vendor illumination signal.";
-        if (lightReceiver != null) return "Waiting for a vendor signal; following Android night mode for now.";
-        return "Following Android night mode. On this head unit it may not follow the headlight switch.";
-    }
-
-    void appearance() {
-        if (dashboard == null) return;
-        boolean systemNight = (getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES;
-        dashboard.data.lamps = LightSignal.enabled(prefs.getInt(LAMPS, 0), firmwareLamps, systemNight);
-        dashboard.data.night = LightSignal.night(prefs.getInt(MODE, 0), dashboard.data.lamps, systemNight);
-        WindowManager.LayoutParams attrs = getWindow().getAttributes();
-        float brightness = dashboard.data.night ? .20f : WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE;
-        if (attrs.screenBrightness != brightness) { attrs.screenBrightness = brightness; getWindow().setAttributes(attrs); }
-        if (panels != null) panels.brightness(brightness);
+    private void appearance() {
+        if (dashboard == null || destroyed) return;
+        dashboard.data.night = lights.night();
+        dashboard.data.lamps = lights.lamps();
+        if (panels != null) panels.refreshLightStatus();
         render();
     }
 
@@ -564,8 +517,6 @@ public final class DashboardActivity extends Activity implements LocationListene
         d.limit = limit();
         d.speedAlert = alertEnabled();
         d.over = trip.limitReached(now);
-        d.hint = route == null ? null : route.hint;
-        d.routeDetail = media.allowed() ? "Start a route for turn details" : "Enable notification access for turns";
         boolean playing = media.playing();
         d.track = !media.title().isEmpty() ? media.title() : media.packageName() != null ? apps.label(media.packageName()) : "No media playing";
         d.artist = !media.artist().isEmpty() ? media.artist() : !media.allowed() ? "Tap to set up media" : "Start music on your player";
@@ -589,13 +540,8 @@ public final class DashboardActivity extends Activity implements LocationListene
         return R.drawable.ic_rain;
     }
 
-    void openNavigation() {
-        if (route != null && route.open != null && route.packageName.equals(route.open.getCreatorPackage())) {
-            try { route.open.send(); return; } catch (Exception ignored) { /* Launch navigation normally. */ }
-        }
-        String preferred = prefs.getString("navigation_app", DriveNotifications.MAPS);
-        String other = DriveNotifications.WAZE.equals(preferred) ? DriveNotifications.MAPS : DriveNotifications.WAZE;
-        if (!apps.launch(preferred) && !apps.launch(other)) toast("Install Google Maps or Waze to start a route.");
+    private void openBluetoothAudio() {
+        if (!apps.launchBluetooth(prefs.getString(BT_AUDIO, ""))) panels.bluetoothAudio(true);
     }
 
     void openMusic() {
@@ -625,12 +571,14 @@ public final class DashboardActivity extends Activity implements LocationListene
             case DashboardView.SETUP: panels.setup(); break;
             case DashboardView.WEATHER: panels.weather(); break;
             case DashboardView.NIGHT:
-                prefs.edit().putInt(MODE, dashboard.data.night ? 2 : 1).apply(); appearance(); break;
+                if (lights.mode() == 0) toast("Dashboard colors are now manual. Restore Auto in Settings.");
+                lights.setMode(dashboard.data.night ? 2 : 1); break;
             case DashboardView.LAMPS:
-                prefs.edit().putInt(LAMPS, dashboard.data.lamps ? 2 : 1).apply(); appearance(); break;
+                if (lights.lampMode() == 0) toast("Photo lights are now manual. Restore Auto in Settings.");
+                lights.setLampMode(dashboard.data.lamps ? 2 : 1); break;
             case DashboardView.GPS: requestGps(); break;
             case DashboardView.LIMIT: panels.speed(); break;
-            case DashboardView.ROUTE: case DashboardView.MAPS: openNavigation(); break;
+            case DashboardView.BT_AUDIO: openBluetoothAudio(); break;
             case DashboardView.MEDIA: panels.media(); break;
             case DashboardView.PREVIOUS: mediaKey(KeyEvent.KEYCODE_MEDIA_PREVIOUS); break;
             case DashboardView.PLAY: mediaKey(KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE); break;
@@ -640,7 +588,7 @@ public final class DashboardActivity extends Activity implements LocationListene
             case DashboardView.RADIO: openRadio(); break;
             case DashboardView.SETTINGS: panels.settings(); break;
             case DashboardView.APPS:
-                if (!apps.start(new Intent(this, AppsActivity.class).putExtra(AppsActivity.NIGHT, dashboard.data.night)))
+                if (!apps.start(new Intent(this, AppsActivity.class)))
                     toast("Apps could not be opened.");
                 break;
             default: break;

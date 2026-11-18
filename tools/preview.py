@@ -21,7 +21,9 @@ class Preview(SimpleHTTPRequestHandler):
         url_path = unquote(urlsplit(url).path)
         path = url_path.strip('/')
         folder = ROOT / 'preview'
-        if path.startswith('shared/'):
+        if path == 'shared/honda-badge.webp':
+            folder, path = ROOT / 'app/src/main/res/drawable-nodpi', 'honda_badge.webp'
+        elif path.startswith('shared/'):
             folder, path = ROOT / 'shared', path.removeprefix('shared/')
         elif path in DOWNLOADS:
             folder, path = ROOT / 'artifacts', DOWNLOADS[path]

@@ -2,7 +2,6 @@ const $ = (id) => document.getElementById(id);
 const consoleView = $('console');
 const panel = $('panel');
 const body = $('panel-content');
-const namespace = 'http://www.w3.org/2000/svg';
 const icon = (name) => `<svg class="icon" aria-hidden="true"><use href="/icons.svg#${name}"></use></svg>`;
 const storageKey = 'vezel-simulator-v1';
 const apkUrl = '/download/Vezel-Drive-Console.apk';
@@ -26,22 +25,23 @@ const normalizeRegistration = value => {
   const label = value.trim().toUpperCase().replace(/\s+/g, ' ');
   return /^(?:[A-Z]{2} )?[A-Z0-9]{1,6} [A-Z0-9]{1,6}$/.test(label) ? label : '';
 };
-const config = { theme: 'day', lamps: false, gauge: 'large', registration: '', limit: 60, alert: true, powerTones: true, track: 0, provider: 'maps' };
+const config = { theme: 'auto', lampMode: 'auto', gaugeStyle: 'dial', registration: '', limit: 60, alert: true, powerTones: true, track: 0 };
 try {
   const saved = JSON.parse(localStorage.getItem(storageKey));
   if (saved && typeof saved === 'object') {
     if (['auto', 'day', 'night'].includes(saved.theme)) config.theme = saved.theme;
-    if (typeof saved.lamps === 'boolean') config.lamps = saved.lamps;
-    if (saved.gauge === 'dial') config.gauge = 'dial';
+    if (['auto', 'on', 'off'].includes(saved.lampMode)) config.lampMode = saved.lampMode;
+    else if (saved.lamps === true) config.lampMode = 'on';
+    if (saved.gaugeStyle === 'large') config.gaugeStyle = 'large';
     config.registration = normalizeRegistration(saved.registration);
     if (typeof saved.alert === 'boolean') config.alert = saved.alert;
     if (typeof saved.powerTones === 'boolean') config.powerTones = saved.powerTones;
     if (Number.isInteger(saved.limit) && saved.limit >= 20 && saved.limit <= 140) config.limit = saved.limit;
     if (Number.isInteger(saved.track) && tracks[saved.track]) config.track = saved.track;
-    if (['maps', 'waze'].includes(saved.provider)) config.provider = saved.provider;
   }
 } catch { /* The preview also works with storage disabled. */ }
 const save = () => { try { localStorage.setItem(storageKey, JSON.stringify(config)); } catch {} };
+let demoHeadlights = false; // A browser sample, never a reading from the vehicle.
 let demoSpeed = 50;
 let trip = 0.4;
 let drive = 21 * 60 + 51;
@@ -79,32 +79,16 @@ setInterval(() => {
 }, 1000);
 clock();
 
-const start = 138;
-const sweep = 264;
-const polar = (r, degrees) => [120 + Math.cos(degrees * Math.PI / 180) * r, 96 + Math.sin(degrees * Math.PI / 180) * r];
-const arc = (end) => `M${polar(91, start).join(' ')} A91 91 0 ${end - start > 180 ? 1 : 0} 1 ${polar(91, end).join(' ')}`;
-$('dial-track').setAttribute('d', arc(start + sweep));
-const ticks = Array.from({ length: 41 }, (_, i) => {
-  const line = document.createElementNS(namespace, 'line');
-  const major = i % 5 === 0;
-  const angle = start + i / 40 * sweep;
-  const [x1, y1] = polar(major ? 76 : 80, angle);
-  const [x2, y2] = polar(85, angle);
-  for (const [key, val] of Object.entries({ x1, y1, x2, y2, 'stroke-width': major ? 1.4 : 0.85 })) line.setAttribute(key, val);
-  line.classList.toggle('major', major);
-  $('dial-ticks').append(line);
-  return line;
-});
+// Keep the progress arc and needle on the same scale as the two static dial faces.
+const gaugeMax = 180, start = 138, sweep = 264;
+const polar = (r, degrees) => [114 + Math.cos(degrees * Math.PI / 180) * r, 114 + Math.sin(degrees * Math.PI / 180) * r];
+const arc = end => `M${polar(98, start).join(' ')} A98 98 0 ${end - start > 180 ? 1 : 0} 1 ${polar(98, end).join(' ')}`;
 const rail = Array.from({ length: 27 }, () => $('speed-rail').appendChild(document.createElement('i')));
 function renderGauge(allowVoice = false) {
-  const progress = Math.min(demoSpeed / 160, 1);
+  const progress = Math.max(0, Math.min(demoSpeed / gaugeMax, 1));
   const angle = start + sweep * progress;
-  const [x, y] = polar(91, angle);
   $('dial-arc').setAttribute('d', progress ? arc(angle) : '');
-  $('dial-point').setAttribute('cx', x);
-  $('dial-point').setAttribute('cy', y);
-  $('dial-point').style.visibility = progress ? 'visible' : 'hidden';
-  ticks.forEach((line, i) => line.classList.toggle('reached', i / 40 <= progress && progress > 0));
+  $('dial-needle').setAttribute('transform', `translate(114 114) rotate(${angle})`);
   rail.forEach((segment, i) => segment.classList.toggle('reached', i < Math.round(progress * rail.length)));
   $('speed').classList.toggle('three-digits', demoSpeed >= 100);
   $('speed').textContent = demoSpeed;
@@ -127,23 +111,31 @@ function renderTrip() {
   $('drive').textContent = minutes >= 60 ? `${Math.floor(minutes / 60)}h ${minutes % 60}m` : `${String(minutes).padStart(2, '0')}:${String(Math.floor(drive % 60)).padStart(2, '0')}`;
 }
 function renderAppearance() {
-  const isNight = config.theme === 'night' || (config.theme === 'auto' && config.lamps);
-  consoleView.classList.toggle('night-mode', isNight);
-  consoleView.classList.toggle('lights-on', config.lamps);
-  consoleView.classList.toggle('dial-gauge', config.gauge === 'dial');
+  const isNight = config.theme === 'night' || (config.theme === 'auto' && demoHeadlights);
+  const lamps = config.lampMode === 'on' || (config.lampMode === 'auto' && demoHeadlights);
+  document.documentElement.dataset.palette = isNight ? 'night' : 'day';
+  document.querySelector('meta[name=theme-color]').content = isNight ? '#101017' : '#eee5da';
+  $('vehicle-mode').textContent = isNight ? 'NIGHT MODE' : 'DAYLIGHT';
+  consoleView.classList.toggle('lights-on', lamps);
+  consoleView.classList.toggle('dial-gauge', config.gaugeStyle === 'dial');
   $('registration-label').textContent = config.registration;
   $('registration-badge').hidden = !config.registration;
   $('photo-edition').hidden = !!config.registration;
   $('night').setAttribute('aria-pressed', String(isNight));
-  $('night').setAttribute('title', isNight ? 'Switch to day display' : 'Switch to night display');
+  const nextDisplay = isNight ? 'Switch to day display' : 'Switch to night display';
+  $('night').title = nextDisplay;
+  $('night').setAttribute('aria-label', nextDisplay);
   $('night').querySelector('use').setAttribute('href', `/icons.svg#${isNight ? 'sun' : 'moon'}`);
-  $('lamps').setAttribute('aria-pressed', String(config.lamps));
-  $('light-label').textContent = config.lamps ? 'LIGHTS + FOG ON' : 'LIGHTS + FOG OFF';
+  $('lamps').setAttribute('aria-pressed', String(lamps));
+  $('light-label').textContent = lamps ? 'LIGHTS + FOG ON' : 'LIGHTS + FOG OFF';
+  $('demo-lights').setAttribute('aria-pressed', String(demoHeadlights));
+  $('demo-lights-label').textContent = `DEMO · LIGHTS ${demoHeadlights ? 'ON' : 'OFF'}`;
   renderAppearanceButtons();
 }
 function renderAppearanceButtons() {
   body.querySelectorAll('[data-theme]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.theme === config.theme)));
-  body.querySelectorAll('[data-gauge]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.gauge === config.gauge)));
+  body.querySelectorAll('[data-lamp-mode]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.lampMode === config.lampMode)));
+  body.querySelectorAll('[data-gauge]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.gauge === config.gaugeStyle)));
 }
 function toast(message) {
   const bar = $('snackbar');
@@ -181,10 +173,18 @@ function greeting(goodbye = false) {
 }
 $('brand').addEventListener('click', () => greeting());
 $('night').addEventListener('click', () => {
-  config.theme = consoleView.classList.contains('night-mode') ? 'day' : 'night';
+  config.theme = document.documentElement.dataset.palette === 'night' ? 'day' : 'night';
   save(); renderAppearance();
 });
-$('lamps').addEventListener('click', () => { config.lamps = !config.lamps; save(); renderAppearance(); });
+$('lamps').addEventListener('click', () => {
+  config.lampMode = consoleView.classList.contains('lights-on') ? 'off' : 'on';
+  save(); renderAppearance();
+});
+function simulateHeadlights(on) {
+  demoHeadlights = on;
+  renderAppearance();
+}
+$('demo-lights').addEventListener('click', () => simulateHeadlights(!demoHeadlights));
 
 // Tiny original soft-synth loops, generated only if the visitor chooses to play.
 let context;
@@ -292,13 +292,13 @@ $('next').addEventListener('click', () => chooseTrack(config.track + 1));
 
 const panels = {
   settings: ['SIMULATOR CONTROLS', 'Drive settings'],
-  navigation: ['ROUTE PREVIEW', 'Navigation'],
+  lighting: ['FACTORY DIMMER / BROWSER DEMO', 'Headlight sync'],
+  'bt-audio': ['ANDROID SHORTCUT', 'BT Audio'],
   music: ['VEZEL SESSIONS', 'Now playing'],
   phone: ['ANDROID SHORTCUT', 'Phone'],
   radio: ['ANDROID SHORTCUT', 'Radio'],
   weather: ['SIMULATED WEATHER', 'Colombo'],
 };
-const providerSegment = () => `<div class="segmented" aria-label="Preferred navigation app">${[['maps', 'Google Maps'], ['waze', 'Waze']].map(([key, label]) => `<button type="button" data-provider="${key}" aria-pressed="${config.provider === key}">${label}</button>`).join('')}</div>`;
 function show(name) {
   if (name === 'apps') { openApps(); return; }
   if (!(name in panels)) return;
@@ -307,11 +307,13 @@ function show(name) {
   switch (name) {
     case 'settings':
       body.innerHTML = `<p class="panel-note">Try the console here with sample data. The Android app uses your head unit’s GPS, notifications and installed apps.</p>
-        <section class="panel-section"><div class="setting-caption">Speed display</div><div class="segmented" aria-label="Speed display">${[['large', 'Large number'], ['dial', 'Round dial']].map(([value, label]) => `<button type="button" data-gauge="${value}" aria-pressed="${config.gauge === value}">${label}</button>`).join('')}</div></section>
+        <button class="lighting-card" type="button" data-panel="lighting">${icon('headlights')}<span><small class="eyebrow">FACTORY DIMMER</small><b>Headlight sync</b></span>${icon('chevron')}</button>
+        <section class="panel-section"><div class="setting-caption">Speed display</div><div class="segmented" aria-label="Speed display">${[['large', 'Large number'], ['dial', 'Metallic dial']].map(([value, label]) => `<button type="button" data-gauge="${value}" aria-pressed="${config.gaugeStyle === value}">${label}</button>`).join('')}</div></section>
         <form class="panel-section" id="registration-form"><label for="registration-input">Registration label (optional)</label><div class="registration-field"><input type="text" id="registration-input" maxlength="32" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="e.g. WP ABC 0123"><button type="submit" class="action">Save</button></div></form>
-        <section class="panel-section"><div class="setting-caption">Display mode</div><div class="segmented" aria-label="Display mode">${['auto', 'day', 'night'].map(mode => `<button type="button" data-theme="${mode}" aria-pressed="${config.theme === mode}">${mode.charAt(0).toUpperCase() + mode.slice(1)}</button>`).join('')}</div></section>
+        <section class="panel-section"><div class="setting-caption">Dashboard colors</div><div class="segmented" aria-label="Dashboard colors">${['auto', 'day', 'night'].map(mode => `<button type="button" data-theme="${mode}" aria-pressed="${config.theme === mode}">${mode.charAt(0).toUpperCase() + mode.slice(1)}</button>`).join('')}</div></section>
+        <section class="panel-section"><div class="setting-caption">Lights on the car photo</div><div class="segmented" aria-label="Photo lights">${['auto', 'on', 'off'].map(mode => `<button type="button" data-lamp-mode="${mode}" aria-pressed="${config.lampMode === mode}">${mode.charAt(0).toUpperCase() + mode.slice(1)}</button>`).join('')}</div></section>
         <section class="panel-section"><label for="limit">Speed alert <output id="limit-value">${config.limit} km/h</output></label><input type="range" id="limit" min="20" max="140" value="${config.limit}"><label class="check-row" for="alert">Speak when the limit is reached<input type="checkbox" id="alert" ${config.alert ? 'checked' : ''}></label></section>
-        <section class="panel-section"><label for="demo-speed">Simulated GPS speed <output id="speed-value">${demoSpeed} km/h</output></label><input type="range" id="demo-speed" min="0" max="160" value="${demoSpeed}"></section>
+        <section class="panel-section"><label for="demo-speed">Simulated GPS speed <output id="speed-value">${demoSpeed} km/h</output></label><input type="range" id="demo-speed" min="0" max="${gaugeMax}" value="${demoSpeed}"></section>
         <div class="actions"><button type="button" class="action" data-action="warning">Preview warning voice</button><button type="button" class="action" data-action="reset">Reset trip</button><a id="apk" class="action primary" href="${apkUrl}" data-apk download hidden>${icon('download')} Android APK</a></div><section class="panel-section"><div class="setting-caption">Power cues</div><label class="check-row" for="power-tones">Welcome and Good Bye tones<input id="power-tones" type="checkbox" ${config.powerTones ? 'checked' : ''}></label><div class="actions"><button type="button" class="action" data-action="startup">Preview Welcome</button><button type="button" class="action" data-action="goodbye">Preview Good Bye</button></div><p class="panel-note">These previews don’t change Android power. Automatic key-off depends on the head unit.</p></section><p id="apk-missing" class="panel-note" hidden>The APK is not available yet. Build it from the Android project to enable the download.</p>`;
       updateApkLinks();
       checkApk();
@@ -339,12 +341,20 @@ function show(name) {
       $('power-tones').addEventListener('change', e => { config.powerTones = e.target.checked; save(); });
       $('demo-speed').addEventListener('input', e => { demoSpeed = Number(e.target.value); $('speed-value').textContent = `${demoSpeed} km/h`; renderGauge(true); });
       break;
-    case 'navigation':
-      body.innerHTML = `<div class="route-summary"><span class="turn">${icon('turn_right')}</span><span><b>400 m · Turn right onto Galle Rd</b><small>ARRIVAL 9:14 AM / 6.2 KM REMAINING</small></span></div>
-        <p class="panel-note">This is a sample route. On Android, allow notification access to see directions from Google Maps or Waze when their notifications include turn details.</p>
-        <section class="panel-section"><div class="setting-caption">Preferred navigation app</div>${providerSegment()}</section>
-        <div class="actions"><a id="map-link" class="action primary" target="_blank" rel="noreferrer">Open map ${icon('chevron')}</a></div>`;
-      renderProvider();
+    case 'lighting':
+      body.innerHTML = `<p class="panel-note">In Auto, the simulated light switch changes both the photo and the day/night palette, without touching your screen brightness.</p>
+        <div class="lighting-sample"><div class="lighting-sample-header">${icon('headlights')}<div><span class="eyebrow">SIMULATED CAR LIGHT SWITCH</span><b>${demoHeadlights ? 'Parking lights on' : 'Lights off'}</b></div></div>
+          <div class="segmented" aria-label="Simulate vehicle lights"><button type="button" data-sim-lights="off" aria-pressed="${!demoHeadlights}">Lights off</button><button type="button" data-sim-lights="on" aria-pressed="${demoHeadlights}">Parking lights on</button></div></div>
+        <section class="panel-section lighting-setup"><div class="setting-caption">On your head unit · While parked</div>
+          <ol><li>Keep the factory dimmer enabled.</li><li>With the lights off, choose <b>Capture lights OFF</b>.</li><li>Turn the lights on, wait for the screen to dim, then choose <b>Capture lights ON &amp; save</b>.</li></ol>
+          <small>If readings stay the same, the backlight can still dim, but the photo needs another signal.</small>
+          ${config.theme !== 'auto' || config.lampMode !== 'auto' ? '<button type="button" class="action" data-action="restore-lighting">Restore Auto for colors and photo</button>' : ''}
+        </section>`;
+      break;
+    case 'bt-audio':
+      body.innerHTML = `<div class="panel-summary">${icon('bluetooth')}<span><b>Bluetooth music</b><small>HEAD UNIT APP SHORTCUT</small></span></div>
+        <p class="panel-note">On Android, BT Audio opens the head unit’s Bluetooth music app. If it isn’t detected, select the app on the first tap or from Settings → App shortcuts → BT Audio.</p>
+        <p class="panel-note">Pair your phone in the head unit’s Bluetooth app. The browser simulator can’t access your paired devices.</p>`;
       break;
     case 'music':
       body.innerHTML = `<p class="panel-note">Three short, original sample loops for the browser preview. The Android launcher displays your real player’s title, artist and album art.</p><div class="track-list">${tracks.map((track, i) => `<button class="track-row" type="button" data-track="${i}">${icon('music')}<span><b>${track.name}</b><small>${track.artist}</small></span></button>`).join('')}</div><div class="actions"><button class="action primary" type="button" data-action="play">Play preview</button></div>`;
@@ -355,30 +365,27 @@ function show(name) {
       body.innerHTML = `<p class="panel-note">The browser can’t access your head unit’s ${name === 'radio' ? 'FM tuner' : 'Bluetooth dialer'}. In the Android launcher, you can assign an installed ${name === 'radio' ? 'Radio' : 'Phone'} app to this shortcut.</p><div class="actions"><button class="action" type="button" data-panel="apps">Browse shortcuts ${icon('chevron')}</button></div>`;
       break;
     case 'weather':
-      body.innerHTML = `<div class="route-summary">${icon('weather')}<span><b>27° · Partly cloudy</b><small>COLOMBO, SRI LANKA</small></span></div><p class="panel-note">Example conditions. On Android, the launcher checks Open-Meteo using your approximate location when you’re online.</p>`;
+      body.innerHTML = `<div class="panel-summary">${icon('weather')}<span><b>27° · Partly cloudy</b><small>COLOMBO, SRI LANKA</small></span></div><p class="panel-note">Example conditions. On Android, the launcher checks Open-Meteo using your approximate location when you’re online.</p>`;
       break;
   }
   if (!panel.open) panel.showModal();
   $('panel-close').focus();
   panel.scrollTop = 0;
 }
-function renderProvider() {
-  const link = $('map-link');
-  if (!link) return;
-  link.href = config.provider === 'waze' ? 'https://www.waze.com/live-map/' : 'https://www.google.com/maps/search/?api=1&query=Galle+Road%2C+Colombo';
-  link.innerHTML = `Open ${config.provider === 'waze' ? 'Waze' : 'Google Maps'} ${icon('chevron')}`;
-  body.querySelectorAll('[data-provider]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.provider === config.provider)));
-}
 document.addEventListener('click', e => {
-  const button = e.target.closest('[data-panel],[data-theme],[data-gauge],[data-track],[data-provider],[data-action]');
+  const button = e.target.closest('[data-panel],[data-theme],[data-lamp-mode],[data-sim-lights],[data-gauge],[data-track],[data-action]');
   if (!button) return;
   const data = button.dataset;
-  if (data.appProvider) { config.provider = data.appProvider; save(); }
   if (data.panel) show(data.panel);
   if (data.theme) { config.theme = data.theme; save(); renderAppearance(); }
-  if (data.gauge) { config.gauge = data.gauge; save(); renderAppearance(); }
+  if (data.lampMode) { config.lampMode = data.lampMode; save(); renderAppearance(); }
+  if (data.simLights) { simulateHeadlights(data.simLights === 'on'); panel.close(); }
+  if (data.gauge) { config.gaugeStyle = data.gauge; save(); renderAppearance(); }
   if (data.track !== undefined) chooseTrack(Number(data.track), true);
-  if (data.provider) { config.provider = data.provider; save(); renderProvider(); }
+  if (data.action === 'restore-lighting') {
+    config.theme = config.lampMode = 'auto';
+    save(); renderAppearance(); show('lighting');
+  }
   if (data.action === 'startup') greeting();
   if (data.action === 'goodbye') greeting(true);
   if (data.action === 'warning') playCue('speed-warning.mp3', .82);
@@ -388,19 +395,24 @@ document.addEventListener('click', e => {
   }
 });
 const catalog = [
-  ['phone', 'phone', 'Bluetooth phone', 'Hands-free calling'],
-  ['navigation', 'navigation', 'Google Maps', 'Navigation', 'maps'],
-  ['music', 'music', 'Music', 'Media player'],
-  ['radio', 'radio', 'Radio', 'FM tuner'],
-  ['settings', 'settings', 'Settings', 'Drive console'],
-  ['navigation', 'compass', 'Waze', 'Navigation', 'waze'],
-  ['weather', 'weather', 'Weather', 'Current conditions'],
+  ['phone', 'phone', 'Bluetooth phone', 'Hands-free calling', 'sage'],
+  ['bt-audio', 'bluetooth', 'BT Audio', 'Bluetooth music', 'blue'],
+  ['', 'navigation', 'Google Maps', 'Map app', 'sage', 'https://www.google.com/maps/'],
+  ['music', 'music', 'Music', 'Media player', 'plum'],
+  ['radio', 'radio', 'Radio', 'FM tuner', 'copper'],
+  ['settings', 'settings', 'Settings', 'Drive console', 'copper'],
+  ['', 'compass', 'Waze', 'Map app', 'blue', 'https://www.waze.com/live-map/'],
+  ['weather', 'weather', 'Weather', 'Current conditions', 'plum'],
 ];
 function renderApps() {
   const query = $('apps-search').value.trim().toLowerCase();
   const matches = catalog.filter(([, , label, detail]) => `${label} ${detail}`.toLowerCase().includes(query));
-  $('apps-grid').innerHTML = matches.map(([target, symbol, label, detail, provider]) =>
-    `<button class="apps-entry" type="button" data-panel="${target}" ${provider ? `data-app-provider="${provider}"` : ''}><span class="apps-entry-icon">${icon(symbol)}</span><b>${label}</b><small>${detail}</small></button>`).join('');
+  $('apps-grid').innerHTML = matches.map(([target, symbol, label, detail, hue, url]) => {
+    const contents = `<span class="apps-entry-icon ${hue}">${icon(symbol)}</span><b>${label}</b><small>${detail}</small>`;
+    return url ? `<a class="apps-entry" href="${url}" target="_blank" rel="noopener noreferrer">${contents}</a>`
+      : `<button class="apps-entry" type="button" data-panel="${target}">${contents}</button>`;
+  }).join('');
+  $('apps-grid').scrollTop = 0;
   $('apps-count').textContent = `${matches.length} ${matches.length === 1 ? 'APP' : 'APPS'} / A–Z`;
   $('apps-empty').hidden = matches.length > 0;
 }

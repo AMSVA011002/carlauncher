@@ -2,8 +2,11 @@ package lk.vezel.console;
 
 import java.util.Locale;
 
-/** Firmware signals only affect the launcher illustration, never the physical lights. */
+/** Interprets advisory inputs for the photo and dashboard palette, not the real lights. */
 final class LightSignal {
+    static final int UNAVAILABLE = -1, MAX_LEVEL = 255;
+    static final int MIN_DIM_CHANGE = 5;
+
     static Boolean read(Object value) {
         if (value instanceof Boolean) return (Boolean) value;
         if (value instanceof Number) {
@@ -21,11 +24,26 @@ final class LightSignal {
         return null;
     }
 
-    static boolean enabled(int selection, Boolean firmware, boolean systemNight) {
-        return selection == 1 || (selection == 0 && (firmware != null ? firmware : systemNight));
+    static boolean validLevel(int level) { return level >= 0 && level <= MAX_LEVEL; }
+
+    static boolean validCalibration(int day, int dim) {
+        return validLevel(day) && validLevel(dim) && day - dim >= MIN_DIM_CHANGE;
     }
 
-    static boolean night(int selection, boolean lights, boolean systemNight) {
-        return selection == 1 || (selection == 0 && (lights || systemNight));
+    /** A generic manual/adaptive brightness change is not proof that the lamps switched. */
+    static Boolean factoryState(int day, int dim, int level) {
+        if (!validCalibration(day, dim) || !validLevel(level)) return null;
+        int tolerance = Math.min(10, (day - dim) / 3);
+        if (Math.abs(level - dim) <= tolerance) return true;
+        if (Math.abs(level - day) <= tolerance) return false;
+        return null;
+    }
+
+    static boolean automatic(Boolean reported, boolean calibrated, boolean systemNight) {
+        return reported != null ? reported : !calibrated && systemNight;
+    }
+
+    static boolean enabled(int selection, boolean automatic) {
+        return selection == 1 || (selection == 0 && automatic);
     }
 }
