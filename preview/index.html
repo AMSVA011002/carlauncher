@@ -7,7 +7,7 @@
   <meta name="description" content="Vezel Drive Console — a native car launcher for the Honda Vezel RU3. Interactive browser simulator.">
   <title>Vezel Drive Console</title>
   <link rel="icon" href="/shared/honda-badge.webp" type="image/webp">
-  <link rel="preload" href="/shared/vezel-photo.webp" as="image">
+  <link rel="preload" href="/shared/vezel-photo-day.webp" as="image">
   <link rel="stylesheet" href="/console.css">
   <script type="module" src="/console.js"></script>
 </head>
@@ -72,8 +72,14 @@
           <span class="vehicle-mode eyebrow"><i></i><span id="vehicle-mode">DAYLIGHT</span></span>
         </div>
         <figure class="vehicle-scene">
-          <img class="scene-off" src="/shared/vezel-photo.webp" alt="Photograph of a Wine Red Honda Vezel Hybrid RU3, showing its side and front" width="1024" height="576">
-          <img class="scene-on" src="/shared/vezel-photo-lit.webp" alt="" aria-hidden="true" width="1024" height="576">
+          <div class="scene-frames scene-day">
+            <img src="/shared/vezel-photo-day.webp" alt="Wine Red Honda, front and side in daylight" width="1024" height="572">
+            <img class="scene-on" src="/shared/vezel-photo-day-lit.webp" alt="" aria-hidden="true" width="1024" height="572">
+          </div>
+          <div class="scene-frames scene-night">
+            <img src="/shared/vezel-photo.webp" alt="Wine Red Honda Vezel, front and side at night" width="1024" height="576">
+            <img class="scene-on" src="/shared/vezel-photo-lit.webp" alt="" aria-hidden="true" width="1024" height="576">
+          </div>
         </figure>
         <div class="vehicle-footer">
           <div class="vehicle-detail">

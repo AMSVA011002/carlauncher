@@ -73,7 +73,8 @@ final class DashboardView extends ViewGroup {
             nightNeedle = gradient(0, -3.5f, 0, 3.5f, 0xffffa15a, 0xffee3628);
     private final Drawable badge;
     private final PowerScreen powerScreen;
-    private boolean starting, photoLit, gaugeNight;
+    private boolean starting, gaugeNight;
+    private String photoAsset;
     private Bitmap photo, gauge;
     private float scale = 1, offsetX, offsetY;
 
@@ -369,13 +370,13 @@ final class DashboardView extends ViewGroup {
 
     private void drawPhoto(Canvas c) {
         final float left = 303, top = 160, right = 999, bottom = 436;
-        Bitmap frame = car(data.lamps);
+        Bitmap frame = car(data.night, data.lamps);
         if (frame == null) {
             round(c, left, top, right, bottom, 0, 0xff100e12, null);
             center(c, "Vehicle photo unavailable", (left + right) / 2, (top + bottom) / 2, 14, bold, 0xffb7abb0);
             return;
         }
-        // Preserve the supplied photo. Only the cover framing and night treatment change.
+        // Both frames for a palette share the same cover crop, so the lamps do not shift.
         float scale = Math.max((right - left) / frame.getWidth(), (bottom - top) / frame.getHeight());
         float width = frame.getWidth() * scale, height = frame.getHeight() * scale;
         float x = left + ((right - left) - width) * .5f;
@@ -421,10 +422,12 @@ final class DashboardView extends ViewGroup {
         badge.draw(c);
     }
 
-    private Bitmap car(boolean lit) {
-        if (photo != null && photoLit == lit) return photo;
-        photo = loadBitmap(lit ? "vezel-photo-lit.webp" : "vezel-photo.webp");
-        photoLit = lit;
+    private Bitmap car(boolean night, boolean lit) {
+        String asset = night ? (lit ? "vezel-photo-lit.webp" : "vezel-photo.webp")
+                : (lit ? "vezel-photo-day-lit.webp" : "vezel-photo-day.webp");
+        if (photo != null && asset.equals(photoAsset)) return photo;
+        photo = loadBitmap(asset);
+        photoAsset = asset;
         return photo;
     }
 

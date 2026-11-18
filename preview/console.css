@@ -113,6 +113,9 @@ a{color:var(--accent)}
 .vehicle-scene{position:relative;margin:0;overflow:hidden;background:#130e11}
 .vehicle-scene::after{content:'';position:absolute;inset:0;background:var(--photo-scrim);pointer-events:none}
 .vehicle-scene img{display:block;position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:center 84%}
+.scene-frames{position:absolute;inset:0}
+.scene-night,:root[data-palette=night] .scene-day{display:none}
+:root[data-palette=night] .scene-night{display:block}
 .scene-on{opacity:0;transition:opacity .24s ease-out}.lights-on .scene-on{opacity:1}
 .vehicle-footer{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:0 16px 0 20px;border-top:1px solid var(--stroke)}
 .vehicle-detail{min-width:0;display:flex;align-items:center;gap:17px}
