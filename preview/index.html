@@ -3,19 +3,19 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#0d0e12">
+  <meta name="theme-color" content="#eee5da">
   <meta name="description" content="Vezel Drive Console — a native car launcher for the Honda Vezel RU3. Interactive browser simulator.">
   <title>Vezel Drive Console</title>
-  <link rel="icon" href="/shared/honda.svg" type="image/svg+xml">
+  <link rel="icon" href="/shared/honda-badge.webp" type="image/webp">
   <link rel="preload" href="/shared/vezel-photo.webp" as="image">
   <link rel="stylesheet" href="/console.css">
   <script type="module" src="/console.js"></script>
 </head>
 <body>
-  <main class="console" id="console" aria-label="Vezel Drive Console simulator">
+  <main class="console dial-gauge" id="console" aria-label="Vezel Drive Console simulator">
     <header class="topbar">
       <button class="wordmark" id="brand" type="button" title="Preview Honda startup">
-        <span class="mark"><img src="/shared/honda.svg" alt="Honda"></span>
+        <span class="mark"><img src="/shared/honda-badge.webp" alt="Honda"></span>
         <span class="brand-type"><b>VEZEL</b><small>DRIVE CONSOLE</small></span>
       </button>
       <div class="clock">
@@ -23,13 +23,13 @@
         <div class="eyebrow" id="date">WED, 18 NOV</div>
       </div>
       <div class="top-actions">
-        <button type="button" class="demo-tag" data-panel="settings" title="Open simulator controls"><span></span>DEMO</button>
+        <button type="button" class="demo-tag" id="demo-lights" aria-label="Simulate the car light switch" aria-pressed="false" title="Simulate the car light switch and its factory dimmer"><i aria-hidden="true"></i><span id="demo-lights-label">DEMO · LIGHTS OFF</span></button>
         <button class="weather-button" type="button" data-panel="weather" aria-label="Weather in Colombo">
           <svg class="icon" aria-hidden="true"><use href="/icons.svg#weather"></use></svg>
           <span class="weather-copy"><b>27°</b><small>Colombo</small></span>
         </button>
         <div class="top-divider"></div>
-        <button id="night" class="night-button" type="button" aria-label="Night display" aria-pressed="false" title="Toggle night display"><svg class="icon" aria-hidden="true"><use href="/icons.svg#moon"></use></svg></button>
+        <button id="night" class="night-button" type="button" aria-label="Night display" aria-pressed="false" title="Switch to night display"><svg class="icon" aria-hidden="true"><use href="/icons.svg#moon"></use></svg></button>
       </div>
     </header>
 
@@ -37,9 +37,17 @@
       <section class="instrument" aria-label="GPS speed and trip">
         <div class="instrument-top"><h1 class="eyebrow">GPS SPEED</h1><span class="fix"><i></i> GPS FIX</span></div>
         <div class="dial" aria-label="Current speed">
-          <svg id="dial-art" class="dial-art" viewBox="0 0 240 195" aria-hidden="true">
-            <defs><linearGradient id="hot-arc" x1="0" y1="1" x2="1" y2="0" gradientUnits="objectBoundingBox"><stop stop-color="#a55b37"/><stop offset="1" stop-color="#ffae69"/></linearGradient></defs>
-            <path id="dial-track" fill="none"></path><path id="dial-arc" fill="none"></path><g id="dial-ticks"></g><circle id="dial-point" r="3.8"></circle>
+          <svg class="dial-art" viewBox="0 0 228 228" aria-hidden="true">
+            <defs><linearGradient id="dial-gradient" x1="18" y1="213" x2="211" y2="17" gradientUnits="userSpaceOnUse"><stop class="arc-low"/><stop class="arc-high" offset="1"/></linearGradient></defs>
+            <path id="dial-arc" fill="none"></path>
+            <g id="dial-needle">
+              <path class="needle-glow" d="M-13 0H81" fill="none"/>
+              <path class="needle-body" d="M-17 -2.7L73 -1.7 83 0 73 1.7 -17 3.6Z"/>
+              <path d="M-12 -.8H72" stroke="#ffe2b6" stroke-width="1" opacity=".65"/>
+            </g>
+            <circle class="hub-rim" cx="114" cy="114" r="11"/>
+            <circle class="hub-face" cx="114" cy="114" r="8.4"/>
+            <circle class="hub-pin" cx="114" cy="114" r="3.6"/>
           </svg>
           <div class="speed-reading"><span id="speed">50</span><span>km/h</span></div>
         </div>
@@ -61,11 +69,7 @@
             <span class="eyebrow vehicle-kicker"><i></i> 2014 / HYBRID RU3</span>
             <h2>Honda Vezel</h2>
           </div>
-          <button class="route" type="button" data-panel="navigation" aria-label="Navigation: in 400 metres turn right onto Galle Road">
-            <svg class="route-decoration" width="250" height="94" viewBox="0 0 250 94" aria-hidden="true"><path d="M148 102l25-42 31-7 27-38 33-6M167 105l23-38 25-5 26-34 27-5M203 103l13-26 20-7 28-31" fill="none" stroke="currentColor" stroke-width="1"/><path d="M190 101l17-31 21-6 25-33" fill="none" stroke="currentColor" stroke-dasharray="3 5"/></svg>
-            <span class="turn"><svg class="icon" aria-hidden="true"><use href="/icons.svg#turn_right"></use></svg></span>
-            <span class="route-copy"><strong>400 <span>m</span></strong><b>Turn right onto Galle Rd</b><small>9:14 AM ETA <i>·</i> 6.2 km</small></span>
-          </button>
+          <span class="vehicle-mode eyebrow"><i></i><span id="vehicle-mode">DAYLIGHT</span></span>
         </div>
         <figure class="vehicle-scene">
           <img class="scene-off" src="/shared/vezel-photo.webp" alt="Photograph of a Wine Red Honda Vezel Hybrid RU3, showing its side and front" width="1024" height="576">
@@ -95,7 +99,7 @@
         </div>
       </section>
       <nav class="app-dock" aria-label="App shortcuts">
-        <button class="dock-button active" type="button" data-panel="navigation"><svg class="icon" aria-hidden="true"><use href="/icons.svg#navigation"></use></svg><span>Navigation</span></button>
+        <button class="dock-button active" type="button" data-panel="bt-audio"><svg class="icon" aria-hidden="true"><use href="/icons.svg#bluetooth"></use></svg><span>BT Audio</span></button>
         <button class="dock-button" type="button" data-panel="music"><svg class="icon" aria-hidden="true"><use href="/icons.svg#music"></use></svg><span>Music</span></button>
         <button class="dock-button" type="button" data-panel="phone"><svg class="icon" aria-hidden="true"><use href="/icons.svg#phone"></use></svg><span>Phone</span></button>
         <button class="dock-button" type="button" data-panel="radio"><svg class="icon" aria-hidden="true"><use href="/icons.svg#radio"></use></svg><span>Radio</span></button>
@@ -111,18 +115,18 @@
     </footer>
     <section id="apps-page" class="apps-page" aria-labelledby="apps-heading" hidden>
       <header class="apps-header">
-        <span class="mark"><img src="/shared/honda.svg" alt="Honda"></span>
+        <span class="mark"><img src="/shared/honda-badge.webp" alt="Honda"></span>
         <div class="apps-headings"><span class="eyebrow">VEZEL / APPLICATIONS</span><h1 id="apps-heading" tabindex="-1">All apps</h1></div>
         <label class="apps-search"> <svg class="icon" aria-hidden="true"><use href="/icons.svg#search"></use></svg><input id="apps-search" type="search" autocomplete="off" aria-label="Find an app" placeholder="Find an app"></label>
         <button class="action" id="apps-back" type="button"><svg class="icon" aria-hidden="true"><use href="/icons.svg#back"></use></svg>Dashboard</button>
       </header>
       <div class="apps-meta eyebrow"><span id="apps-count" aria-live="polite"></span><span>SIMULATOR / SAMPLE APPS</span></div>
-      <div id="apps-grid" class="apps-grid"></div>
+      <div id="apps-grid" class="apps-grid" aria-label="Sample apps"></div>
       <p class="apps-empty" id="apps-empty" hidden>No apps match your search.</p>
       <footer class="apps-footer eyebrow">YOUR INSTALLED HEAD UNIT APPS APPEAR HERE IN THE ANDROID LAUNCHER</footer>
     </section>
     <div class="welcome" id="welcome" hidden role="status">
-      <div class="welcome-center"><img src="/shared/honda-gold.svg" alt="Honda"><strong id="greeting">Welcome</strong><span>HONDA / VEZEL</span></div>
+      <div class="welcome-center"><img src="/shared/honda-badge.webp" alt="Honda"><strong id="greeting">Welcome</strong><span>HONDA / VEZEL</span></div>
     </div>
   </main>
   <dialog id="panel" aria-labelledby="panel-title">

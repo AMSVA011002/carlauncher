@@ -7,8 +7,6 @@
     <uses-feature android:name="android.hardware.location.gps" android:required="false"/>
     <uses-feature android:name="android.hardware.touchscreen" android:required="false"/>
     <queries>
-        <package android:name="com.google.android.apps.maps"/>
-        <package android:name="com.waze"/>
         <intent>
             <action android:name="android.intent.action.MAIN"/>
             <category android:name="android.intent.category.HOME"/>
@@ -54,6 +52,7 @@
         </activity>
         <activity
             android:name=".AppsActivity"
+            android:configChanges="uiMode"
             android:exported="false"
             android:screenOrientation="sensorLandscape"/>
         <service

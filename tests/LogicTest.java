@@ -3,11 +3,12 @@ package lk.vezel.console;
 public final class LogicTest {
     public static void main(String[] args) {
         tripAndAlert();
-        navigation();
+        gauge();
+        bluetoothAudio();
         lights();
         registration();
         power();
-        System.out.println("Trip, speed alert, notification, illumination, power cue and registration tests passed.");
+        System.out.println("Trip, speed alert, gauge, BT Audio, illumination, power cue and registration tests passed.");
     }
 
     private static void tripAndAlert() {
@@ -66,39 +67,48 @@ public final class LogicTest {
         return new TripMeter.Fix(ms, 6.913, 79.851, accuracy, speed, 296);
     }
 
-    private static void navigation() {
-        assertHint(NavigationText.parse("400m", "Turn right onto Galle Rd", "9:14 AM ETA · 6.2 km"),
-                "400 m", "Turn right onto Galle Rd", "9:14 AM ETA", NavigationText.Arrow.RIGHT);
-        assertHint(NavigationText.parse("In 1.2 km, keep left at the fork"),
-                "1.2 km", "keep left at the fork", "", NavigationText.Arrow.LEFT);
-        assertHint(NavigationText.parse("Turn left onto Duplication Rd in 250 m"),
-                "250 m", "Turn left onto Duplication Rd", "", NavigationText.Arrow.LEFT);
-        assertHint(NavigationText.parse("Turn right, 100 ft"), "100 ft", "Turn right", "", NavigationText.Arrow.RIGHT);
-        assertHint(NavigationText.parse("600\u202fm • Continue straight"), "600 m", "Continue straight", "", NavigationText.Arrow.STRAIGHT);
-        assertHint(NavigationText.parse("In 10 m, at the roundabout take the second exit"), "10 m",
-                "at the roundabout take the second exit", "", NavigationText.Arrow.OTHER);
-        assertHint(NavigationText.withSummary(NavigationText.parse("Head southwest on Galle Rd"), "6 km", "ETA 17:04"),
-                "", "Head southwest on Galle Rd", "17:04 ETA", NavigationText.Arrow.OTHER);
-        assertHint(NavigationText.parse("Turn left, then turn right in 400 m"), "", "Turn left", "", NavigationText.Arrow.LEFT);
-        assertHint(NavigationText.parse("120 m · Turn left, then turn right in 400 m"), "120 m", "Turn left", "", NavigationText.Arrow.LEFT);
-        check(NavigationText.parse("20 min · 11 km", "Looking for GPS") == null, "No fake turn from trip summary");
-        check(NavigationText.parse("Turn on notifications", "400 m") == null, "No fake turn from a promo");
-        check(NavigationText.parse("400 m · Galle Rd") == null, "Do not guess a maneuver from road name only");
+    private static void gauge() {
+        TripMeter meter = new TripMeter(0, 0);
+        meter.accept(fix(1_000, 4, 25));
+        check(meter.speed(1_000) == 90 && GaugeScale.angle(meter.speed(1_000)) == 270f,
+                "A real 90 km/h GPS reading points straight up at the midpoint");
+        check(GaugeScale.angle(0) == 138f && GaugeScale.angle(180) == 402f, "Needle agrees with the printed zero and maximum");
+        check(GaugeScale.angle(1_000) == GaugeScale.angle(180), "Clamp the needle, not the actual GPS number");
+        check(GaugeScale.progress(-1) == 0f && meter.speed(20_000) == -1, "Stale fixes remain unavailable");
     }
 
-    private static void assertHint(NavigationText.Hint hint, String distance, String text, String detail, NavigationText.Arrow arrow) {
-        check(hint != null && hint.distance.equals(distance) && hint.instruction.equals(text)
-                && hint.detail.equals(detail) && hint.arrow == arrow, "Navigation matching: " + text);
+    private static void bluetoothAudio() {
+        check(BluetoothAudioMatch.score("BT Audio", "oem.player.Home", true) == 2, "Recognize a dedicated BT Audio label");
+        check(BluetoothAudioMatch.score("Bluetooth-Music", "player.Home", false) == 2, "Recognize a media app without a package allowlist");
+        check(BluetoothAudioMatch.score("Bluetooth", "oem.bluetooth.BtMusicActivity", true) == 1, "Discover a dedicated vendor music entry");
+        check(BluetoothAudioMatch.score("Bluetooth", "oem.bluetooth.ConnectActivity", true) == 0, "Do not guess a generic Bluetooth entry is audio");
+        check(BluetoothAudioMatch.score("Bluetooth Audio Settings", "oem.bluetooth.BtMusicSettings", true) == 0, "Exclude Bluetooth config");
+        check(BluetoothAudioMatch.score("Phone", "oem.bluetooth.Dialer", true) == 0, "Exclude hands-free phone");
+        check(BluetoothAudioMatch.score("Bluetooth", "oem.bluetooth.A2dpConnectActivity", true) == 0, "Do not select an A2DP connection UI");
+        check(BluetoothAudioMatch.score("Other app", "other.BtMusicActivity", false) == 0, "Only trust class-name hints for system apps");
     }
 
     private static void lights() {
         check(Boolean.TRUE.equals(LightSignal.read(" ON ")), "OEM string on");
         check(Boolean.FALSE.equals(LightSignal.read(0)), "OEM numeric off");
         check(LightSignal.read(0.3) == null && LightSignal.read("maybe") == null, "Ignore unexpected signals");
-        check(LightSignal.enabled(0, null, true), "System night fallback");
-        check(!LightSignal.enabled(0, false, true), "OEM source wins over system appearance");
-        check(LightSignal.enabled(1, false, false) && !LightSignal.enabled(2, true, true), "Manual override");
-        check(LightSignal.night(0, true, false) && !LightSignal.night(2, true, true), "Auto and manual night");
+        check(!LightSignal.validCalibration(70, 70) && !LightSignal.validCalibration(50, 88), "Reject identical or reversed readings");
+        check(!LightSignal.validCalibration(255, -1) && !LightSignal.validCalibration(256, 44), "Reject unavailable or out-of-range settings");
+        check(!LightSignal.validCalibration(74, 70) && LightSignal.validCalibration(75, 70), "Require distinct dimming");
+        check(Boolean.FALSE.equals(LightSignal.factoryState(175, 50, 175)), "Lights off returns daylight at cold start or wake");
+        check(Boolean.TRUE.equals(LightSignal.factoryState(175, 50, 50)), "Lights on recognizes the learned dim level");
+        check(Boolean.FALSE.equals(LightSignal.factoryState(175, 50, 170)) && Boolean.TRUE.equals(LightSignal.factoryState(175, 50, 54)),
+                "Small reporting differences still match the right state");
+        check(LightSignal.factoryState(175, 50, 128) == null && LightSignal.factoryState(175, 50, -1) == null,
+                "Do not interpret a generic brightness change or missing read as headlights");
+        check(!LightSignal.automatic(null, true, true), "Do not substitute an unrelated night theme for an unmatched learned signal");
+        check(LightSignal.automatic(null, false, true) && !LightSignal.automatic(null, false, false), "Android theme fallback without calibration");
+        check(!LightSignal.automatic(false, false, true), "Explicit OEM OFF wins over a night theme");
+        check(LightSignal.automatic(true, false, false), "Explicit OEM ON wins over a day theme");
+        boolean dimmed = LightSignal.automatic(LightSignal.factoryState(175, 50, 50), true, false);
+        boolean bright = LightSignal.automatic(LightSignal.factoryState(175, 50, 175), true, true);
+        check(LightSignal.enabled(0, dimmed) && !LightSignal.enabled(0, bright), "Auto photo and palette follow the same reading");
+        check(LightSignal.enabled(1, bright) && !LightSignal.enabled(2, dimmed), "Manual choices override automatic sync independently");
     }
 
     private static void registration() {

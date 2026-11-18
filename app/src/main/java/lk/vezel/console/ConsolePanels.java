@@ -39,37 +39,46 @@ import java.util.Locale;
 
 /** Parked setup and the native installed-app drawer. */
 final class ConsolePanels {
-    private static final int TEXT = 0xfff0e8e4, MUTED = 0xffb2a6aa, AMBER = 0xffefa66f;
+    private ConsolePalette palette;
     private final DashboardActivity activity;
     private Dialog current;
+    private TextView lightStatus;
 
     ConsolePanels(DashboardActivity activity) { this.activity = activity; }
 
-    void dismiss() { if (current != null) { current.dismiss(); current = null; } }
+    void dismiss() {
+        clearLightStatus();
+        if (current != null) { current.dismiss(); current = null; }
+    }
 
-    void brightness(float value) {
-        if (current == null || current.getWindow() == null) return;
-        Window window = current.getWindow();
-        WindowManager.LayoutParams attrs = window.getAttributes();
-        attrs.screenBrightness = value;
-        window.setAttributes(attrs);
+    private void clearLightStatus() {
+        if (lightStatus != null) activity.lights.showStatus(false);
+        lightStatus = null;
+    }
+
+    void refreshLightStatus() {
+        if (lightStatus == null) return;
+        int level = activity.lights.level();
+        String reading = LightSignal.validLevel(level) ? String.valueOf(level) : "not reported";
+        lightStatus.setText("ANDROID BRIGHTNESS  ·  " + reading + "\n" + activity.lights.source());
     }
 
     void settings() {
         Shell s = shell("VEZEL DRIVE CONSOLE", "Drive settings", true);
         note(s.body, "Set up your home screen and shortcuts while parked.");
         button(s.body, "Dashboard appearance  ·  Speed & registration", true, this::dashboardAppearance);
-        section(s.body, "Display mode");
-        int mode = activity.prefs.getInt(DashboardActivity.MODE, 0);
+        button(s.body, "Headlight sync  ·  Factory dimmer", true, this::headlightSync);
+        section(s.body, "Dashboard colors");
+        int mode = activity.lights.mode();
         choices(s.body, new String[]{"Auto", "Day", "Night"}, mode == 1 ? 2 : mode == 2 ? 1 : 0, index -> {
             int next = index == 1 ? 2 : index == 2 ? 1 : 0;
-            activity.prefs.edit().putInt(DashboardActivity.MODE, next).apply(); activity.appearance();
+            activity.lights.setMode(next);
         });
-        section(s.body, "Headlights and fog lights illustration");
-        choices(s.body, new String[]{"Follow source", "On", "Off"}, activity.prefs.getInt(DashboardActivity.LAMPS, 0), index -> {
-            activity.prefs.edit().putInt(DashboardActivity.LAMPS, index).apply(); activity.appearance();
+        section(s.body, "Lights on the car photo");
+        choices(s.body, new String[]{"Auto", "On", "Off"}, activity.lights.lampMode(), index -> {
+            activity.lights.setLampMode(index);
         });
-        button(s.body, "Configure OEM illumination signal", false, this::illumination);
+        note(s.body, "Auto uses the same input for the dashboard colors and photo. Screen brightness stays under the head unit’s control.");
         section(s.body, "Driving");
         button(s.body, "Speed alert  ·  " + (activity.alertEnabled() ? activity.limit() + " km/h" : "off"), true, this::speed);
         button(s.body, "Reset trip distance and drive time", false, this::confirmReset);
@@ -78,15 +87,14 @@ final class ConsolePanels {
         button(s.body, "Open Android Wi-Fi settings", false, () -> {
             dismiss(); if (!activity.apps.start(new Intent(Settings.ACTION_WIFI_SETTINGS))) activity.toast("Wi-Fi settings are unavailable.");
         });
-        section(s.body, "Navigation & music");
-        boolean waze = DriveNotifications.WAZE.equals(activity.prefs.getString("navigation_app", DriveNotifications.MAPS));
-        choices(s.body, new String[]{"Google Maps", "Waze"}, waze ? 1 : 0, index -> activity.prefs.edit()
-                .putString("navigation_app", index == 1 ? DriveNotifications.WAZE : DriveNotifications.MAPS).apply());
+        section(s.body, "Media playback");
         toggle(s.body, "Resume the last playing media session on startup", activity.prefs.getBoolean("resume_music", true), enabled -> {
             activity.prefs.edit().putBoolean("resume_music", enabled).apply();
             if (!enabled) activity.media.cancelResume();
         });
         section(s.body, "App shortcuts");
+        button(s.body, "BT Audio  ·  " + activity.apps.bluetoothLabel(activity.prefs.getString(DashboardActivity.BT_AUDIO, "")),
+                false, () -> bluetoothAudio(false));
         assignment(s.body, "Music", "shortcut_music");
         assignment(s.body, "Phone", "shortcut_phone");
         assignment(s.body, "Radio", "shortcut_radio");
@@ -101,7 +109,7 @@ final class ConsolePanels {
     private void dashboardAppearance() {
         Shell s = shell("PHOTO EDITION", "Dashboard appearance", true);
         section(s.body, "Speed display");
-        choices(s.body, new String[]{"Large number", "Round dial"}, activity.dialGauge() ? 1 : 0,
+        choices(s.body, new String[]{"Large number", "Metallic dial"}, activity.dialGauge() ? 1 : 0,
                 index -> activity.setDialGauge(index == 1));
         section(s.body, "Registration label");
         note(s.body, "Your registration appears beside the Wine Red swatch. It is not drawn over the photograph. Leave it blank to hide it.");
@@ -132,7 +140,7 @@ final class ConsolePanels {
         button(s.body, activity.preciseGps() ? "Precise location allowed" : "Allow precise location", false, () -> {
             dismiss(); activity.requestGps();
         });
-        section(s.body, "3. Music and turn previews");
+        section(s.body, "3. Music and playback controls");
         button(s.body, activity.notificationsAllowed() ? "Notification access allowed" : "Allow notification access", false, () -> {
             dismiss(); activity.notificationSetup();
         });
@@ -151,10 +159,13 @@ final class ConsolePanels {
         note(s.body, "Choose your own threshold. The warning symbol appears at that speed and the spoken warning plays once after two GPS samples at or above it. This is not a road speed-limit reading.");
         int[] value = {activity.limit()};
         boolean[] enabled = {activity.alertEnabled()};
-        TextView count = text(value[0] + " km/h", 28, AMBER, true);
+        TextView count = text(value[0] + " km/h", 28, palette.accent, true);
         count.setGravity(Gravity.CENTER);
         s.body.addView(count, matchWrap());
         SeekBar slider = new SeekBar(activity);
+        slider.setProgressTintList(ColorStateList.valueOf(palette.accent));
+        slider.setProgressBackgroundTintList(ColorStateList.valueOf(palette.edge));
+        slider.setThumbTintList(ColorStateList.valueOf(palette.accent));
         slider.setMax(120);
         slider.setProgress(value[0] - 20);
         slider.setContentDescription("Speed alert in kilometres per hour");
@@ -186,7 +197,7 @@ final class ConsolePanels {
         note(s.body, !activity.media.title().isEmpty() ? activity.media.title() + (activity.media.artist().isEmpty() ? "" : " · " + activity.media.artist())
                 : "Start a track in your music app. The home screen shows the title, artist and art when the player shares them.");
         if (!activity.notificationsAllowed()) {
-            note(s.body, "Allow notification access to read Android media sessions and navigation notifications.");
+            note(s.body, "Allow notification access to show active Android media sessions and control playback.");
             button(s.body, "Open notification access", true, () -> { dismiss(); activity.notificationSetup(); });
         }
         button(s.body, "Open music app", activity.notificationsAllowed(), () -> { dismiss(); activity.openMusic(); });
@@ -199,7 +210,7 @@ final class ConsolePanels {
         WeatherClient client = activity.weather;
         WeatherClient.Reading value = client.current();
         if (value != null) {
-            TextView temperature = text(value.temperature + "°C  ·  " + value.condition(), 23, TEXT, true);
+            TextView temperature = text(value.temperature + "°C  ·  " + value.condition(), 23, palette.ink, true);
             LinearLayout.LayoutParams p = matchWrap(); p.topMargin = dp(14);
             s.body.addView(temperature, p);
             note(s.body, value.place + (client.cached(value) ? " · Last saved reading" : " · Current reading"));
@@ -212,22 +223,77 @@ final class ConsolePanels {
         show(s);
     }
 
-    private void illumination() {
-        Shell s = shell("ILLUMINATION INPUT", "Headlight source", true);
-        note(s.body, activity.lightSource());
-        note(s.body, "Optional: enter the documented broadcast action and extra from your head unit. Accepts a boolean, 0/1, or on/off. This only changes the dashboard.");
-        EditText action = field("Vendor broadcast action", activity.prefs.getString(DashboardActivity.OEM_ACTION, ""));
-        EditText extra = field("Extra key", activity.prefs.getString(DashboardActivity.OEM_EXTRA, ""));
+    private void headlightSync() {
+        Shell s = shell("FACTORY DIMMER", "Headlight sync", true);
+        note(s.body, "While parked, keep the head unit’s factory dimming option enabled. Learn the two brightness levels so the photo and dashboard can follow it.");
+        TextView live = text("", 13, palette.accent, true);
+        live.setLineSpacing(dp(3), 1f);
+        s.body.addView(live, withMargin(12, -2));
+        TextView feedback = text("Switch the car lights off, wait for the display to brighten, then capture OFF.", 13, palette.muted, false);
+        feedback.setLineSpacing(dp(2), 1f);
+        s.body.addView(feedback, withMargin(11, -2));
+        int[] off = {LightSignal.UNAVAILABLE};
+        Button offButton = control("1. Capture lights OFF", true);
+        Button onButton = control("2. Capture lights ON & save", false);
+        onButton.setEnabled(false);
+        onButton.setAlpha(.52f);
+        offButton.setOnClickListener(v -> {
+            off[0] = activity.lights.readBrightness();
+            boolean captured = LightSignal.validLevel(off[0]);
+            onButton.setEnabled(captured);
+            onButton.setAlpha(captured ? 1f : .52f);
+            decorate(onButton, captured);
+            decorate(offButton, !captured);
+            feedback.setText(captured
+                    ? "OFF captured at " + off[0] + ". Turn on parking lights or headlights, wait for the screen to dim, then capture ON."
+                    : "Android is not reporting brightness. Factory dim can still work, but the photo needs a readable signal.");
+        });
+        onButton.setOnClickListener(v -> {
+            int on = activity.lights.readBrightness();
+            if (activity.lights.learnFactoryDim(off[0], on)) {
+                dismiss();
+                activity.toast("Headlight sync saved. Switch your lights off and on to test.");
+            } else {
+                String reading = LightSignal.validLevel(on) ? "ON read " + on + ", OFF read " + off[0] + ". " : "No ON reading. ";
+                feedback.setText(reading + "Android did not report a distinct dim level. Wait until the screen dims and try again. If the levels stay the same, this firmware may not expose its dimming to apps.");
+            }
+        });
+        s.body.addView(offButton, withMargin(8, dp(44)));
+        s.body.addView(onButton, withMargin(6, dp(44)));
+        if (activity.lights.hasFactoryDim()) {
+            note(s.body, "Saved readings: OFF " + activity.lights.brightLevel() + "  ·  ON " + activity.lights.dimLevel());
+            button(s.body, "Forget learned readings", false, () -> { activity.lights.forgetFactoryDim(); headlightSync(); });
+        }
+        if (activity.lights.hasOverrides()) {
+            note(s.body, "Manual colors or photo lights are currently selected.");
+            button(s.body, "Restore Auto for colors and photo", false, () -> { activity.lights.followLighting(); headlightSync(); });
+        }
+        button(s.body, "Advanced: documented OEM signal", false, this::oemIllumination);
+        show(s);
+        if (current == s.dialog) {
+            lightStatus = live;
+            activity.lights.showStatus(true);
+            refreshLightStatus();
+        }
+    }
+
+    private void oemIllumination() {
+        Shell s = shell("ILLUMINATION INPUT", "OEM signal", true);
+        note(s.body, activity.lights.source());
+        note(s.body, "Only enter an action and extra documented for this firmware. The signal replaces learned brightness and affects the dashboard only. Accepts a boolean, 0/1, or on/off.");
+        EditText action = field("Vendor broadcast action", activity.prefs.getString(HeadlightSync.OEM_ACTION, ""));
+        EditText extra = field("Extra key", activity.prefs.getString(HeadlightSync.OEM_EXTRA, ""));
         s.body.addView(action, withMargin(5, dp(44)));
         s.body.addView(extra, withMargin(6, dp(44)));
-        button(s.body, "Save illumination source", true, () -> {
+        button(s.body, "Save OEM signal", true, () -> {
             String a = action.getText().toString().trim(), e = extra.getText().toString().trim();
-            if (a.isEmpty() && e.isEmpty()) { activity.setIllumination("", ""); settings(); return; }
             if (!a.matches("[A-Za-z_][A-Za-z0-9_.]{2,159}")) { action.setError("Enter the firmware's broadcast action"); return; }
             if (!e.matches("[A-Za-z0-9_.:$-]{1,128}")) { extra.setError("Enter the firmware's extra key"); return; }
-            activity.setIllumination(a, e); settings();
+            if (!activity.lights.setOem(a, e)) activity.toast("This illumination broadcast could not be registered.");
+            headlightSync();
         });
-        button(s.body, "Use Android night mode only", false, () -> { activity.setIllumination("", ""); settings(); });
+        button(s.body, "Use Android theme instead", false, () -> { activity.lights.setOem("", ""); headlightSync(); });
+        button(s.body, "Back to Headlight sync", false, this::headlightSync);
         show(s);
     }
 
@@ -260,22 +326,28 @@ final class ConsolePanels {
         show(s);
     }
 
-    void drawer(String title, String assignment) {
+    void drawer(String title, String assignment) { picker(title, assignment, false, false); }
+
+    void bluetoothAudio(boolean launchAfterPick) { picker("Choose BT Audio app", DashboardActivity.BT_AUDIO, true, launchAfterPick); }
+
+    private void picker(String title, String assignment, boolean bluetooth, boolean launchAfterPick) {
         Shell s = shell("ANDROID SHORTCUT", title, false);
+        if (bluetooth) note(s.body, "Choose the head unit’s Bluetooth Audio app. If music is a tab in its Bluetooth app, choose that app.");
         EditText search = field("Find an installed app", "");
         s.body.addView(search, withMargin(13, dp(43)));
-        List<AppShortcuts.Entry> all = activity.apps.list();
+        List<AppShortcuts.Entry> all = bluetooth ? activity.apps.bluetoothChoices() : activity.apps.list();
         ListView list = new ListView(activity);
-        list.setDivider(new ColorDrawable(0xff2e2931));
+        list.setDivider(new ColorDrawable(palette.edge));
         list.setDividerHeight(dp(1));
         list.setSelector(new ColorDrawable(0x2aeda66f));
         list.setCacheColorHint(Color.TRANSPARENT);
-        AppList items = new AppList(all);
-        TextView empty = text(all.isEmpty() ? "No launchable apps found" : "No matching apps", 14, MUTED, false);
+        AppList items = new AppList(all, bluetooth);
+        TextView empty = text(all.isEmpty() ? "No launchable apps found" : "No matching apps", 14, palette.muted, false);
         empty.setPadding(0, dp(16), 0, 0);
         list.setEmptyView(empty);
         list.setAdapter(items);
-        int listHeight = Math.min(dp(260), (int) (activity.getResources().getDisplayMetrics().heightPixels * .43f));
+        int listHeight = Math.min(dp(bluetooth ? 215 : 260),
+                (int) (activity.getResources().getDisplayMetrics().heightPixels * (bluetooth ? .34f : .43f)));
         s.body.addView(empty, matchWrap());
         s.body.addView(list, withMargin(9, listHeight));
         search.addTextChangedListener(new TextWatcher() {
@@ -286,11 +358,14 @@ final class ConsolePanels {
         list.setOnItemClickListener((parent, view, position, id) -> {
             AppShortcuts.Entry entry = items.getItem(position);
             dismiss();
-            activity.prefs.edit().putString(assignment, entry.pkg).apply();
-            activity.toast(entry.name + " shortcut saved.");
+            String target = bluetooth ? entry.component.flattenToString() : entry.pkg;
+            activity.prefs.edit().putString(assignment, target).apply();
+            if (launchAfterPick && !activity.apps.launchBluetooth(target)) activity.toast("This Bluetooth app could not be opened.");
+            else if (!launchAfterPick) activity.toast(entry.name + " shortcut saved.");
         });
-        button(s.body, "Clear shortcut assignment", false, () -> {
-            activity.prefs.edit().remove(assignment).apply(); dismiss(); activity.toast("Shortcut assignment cleared.");
+        button(s.body, bluetooth ? "Use automatic detection" : "Clear shortcut assignment", false, () -> {
+            activity.prefs.edit().remove(assignment).apply(); dismiss();
+            activity.toast(bluetooth ? "BT Audio set to auto-detect." : "Shortcut assignment cleared.");
         });
         show(s);
     }
@@ -298,12 +373,17 @@ final class ConsolePanels {
     private final class AppList extends BaseAdapter {
         private final List<AppShortcuts.Entry> original;
         private final List<AppShortcuts.Entry> visible;
-        AppList(List<AppShortcuts.Entry> source) { original = source; visible = new ArrayList<>(source); }
+        private final boolean bluetooth;
+        AppList(List<AppShortcuts.Entry> source, boolean bluetooth) {
+            this.bluetooth = bluetooth;
+            original = source;
+            visible = new ArrayList<>(source);
+        }
         void filter(String search) {
             String q = search.trim().toLowerCase(Locale.ROOT);
             visible.clear();
             for (AppShortcuts.Entry item : original) if (item.name.toLowerCase(Locale.ROOT).contains(q)
-                    || item.pkg.toLowerCase(Locale.ROOT).contains(q)) visible.add(item);
+                    || item.component.flattenToString().toLowerCase(Locale.ROOT).contains(q)) visible.add(item);
             notifyDataSetChanged();
         }
         @Override public int getCount() { return visible.size(); }
@@ -321,15 +401,27 @@ final class ConsolePanels {
                 ImageView badge = new ImageView(activity);
                 badge.setScaleType(ImageView.ScaleType.FIT_CENTER);
                 row.addView(badge, new LinearLayout.LayoutParams(dp(29), dp(29)));
-                TextView name = text("", 14, TEXT, true);
+                LinearLayout details = new LinearLayout(activity);
+                details.setOrientation(LinearLayout.VERTICAL);
+                TextView name = text("", 14, palette.ink, true);
                 name.setSingleLine(true); name.setEllipsize(TextUtils.TruncateAt.END);
+                details.addView(name);
+                if (bluetooth) {
+                    TextView extra = text("", 10, palette.muted, false);
+                    extra.setSingleLine(true); extra.setEllipsize(TextUtils.TruncateAt.MIDDLE);
+                    details.addView(extra);
+                }
                 LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(0, -2, 1);
                 p.leftMargin = dp(10);
-                row.addView(name, p);
+                row.addView(details, p);
             }
             Drawable badge = app.icon(activity.getPackageManager());
-            ((ImageView) row.getChildAt(0)).setImageDrawable(badge == null ? activity.getDrawable(R.drawable.ic_apps) : badge);
-            ((TextView) row.getChildAt(1)).setText(app.name);
+            ImageView appIcon = (ImageView) row.getChildAt(0);
+            appIcon.setImageDrawable(badge == null ? activity.getDrawable(R.drawable.ic_apps) : badge);
+            if (badge == null) appIcon.setColorFilter(palette.accent); else appIcon.clearColorFilter();
+            LinearLayout details = (LinearLayout) row.getChildAt(1);
+            ((TextView) details.getChildAt(0)).setText(app.name);
+            if (bluetooth) ((TextView) details.getChildAt(1)).setText(app.component.flattenToShortString());
             return row;
         }
     }
@@ -341,22 +433,23 @@ final class ConsolePanels {
     }
 
     private Shell shell(String label, String title, boolean scroll) {
+        palette = ConsolePalette.forNight(activity.lights.night());
         Dialog dialog = new Dialog(activity);
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
         LinearLayout shell = new LinearLayout(activity);
         shell.setOrientation(LinearLayout.VERTICAL);
         shell.setPadding(dp(18), dp(14), dp(18), dp(16));
-        shell.setBackground(box(0xff18171d, 0xff514039, 17));
+        shell.setBackground(box(palette.panel, palette.edge, 17));
         shell.setFocusableInTouchMode(true);
         LinearLayout head = new LinearLayout(activity);
         head.setGravity(Gravity.CENTER_VERTICAL);
         LinearLayout headings = new LinearLayout(activity);
         headings.setOrientation(LinearLayout.VERTICAL);
-        TextView eyebrow = text(label, 9, AMBER, false);
+        TextView eyebrow = text(label, 9, palette.accent, false);
         eyebrow.setTypeface(Typeface.MONOSPACE);
         eyebrow.setLetterSpacing(.13f);
         headings.addView(eyebrow, matchWrap());
-        TextView heading = text(title, 25, TEXT, true);
+        TextView heading = text(title, 25, palette.ink, true);
         if (Build.VERSION.SDK_INT >= 28) heading.setAccessibilityHeading(true);
         headings.addView(heading, matchWrap());
         head.addView(headings, new LinearLayout.LayoutParams(0, -2, 1));
@@ -367,7 +460,7 @@ final class ConsolePanels {
         head.addView(close, new LinearLayout.LayoutParams(dp(44), dp(44)));
         shell.addView(head, matchWrap());
         View rule = new View(activity);
-        rule.setBackgroundColor(0xff393038);
+        rule.setBackgroundColor(palette.edge);
         shell.addView(rule, withMargin(10, dp(1)));
         LinearLayout content = new LinearLayout(activity);
         content.setOrientation(LinearLayout.VERTICAL);
@@ -385,7 +478,9 @@ final class ConsolePanels {
         } else shell.addView(content, matchWrap());
         dialog.setContentView(shell);
         dialog.setCanceledOnTouchOutside(true);
-        dialog.setOnDismissListener(d -> { if (current == dialog) current = null; });
+        dialog.setOnDismissListener(d -> {
+            if (current == dialog) { current = null; clearLightStatus(); }
+        });
         shell.requestFocus();
         return new Shell(dialog, content);
     }
@@ -398,24 +493,23 @@ final class ConsolePanels {
         if (window != null) {
             window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
             window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
-            window.setDimAmount(.74f);
+            window.setDimAmount(palette == ConsolePalette.NIGHT ? .74f : .42f);
             window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE | WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN);
         }
         current.show();
         if (window != null) {
             window.setLayout(Math.max(dp(240), Math.min(dp(505), activity.getResources().getDisplayMetrics().widthPixels - dp(32))), -2);
-            brightness(activity.getWindow().getAttributes().screenBrightness);
         }
     }
 
     private void note(LinearLayout body, String value) {
-        TextView t = text(value, 13, MUTED, false);
+        TextView t = text(value, 13, palette.muted, false);
         t.setLineSpacing(dp(2), 1f);
         body.addView(t, withMargin(11, -2));
     }
 
     private void section(LinearLayout body, String value) {
-        TextView t = text(value, 13, TEXT, true);
+        TextView t = text(value, 13, palette.ink, true);
         body.addView(t, withMargin(14, -2));
     }
 
@@ -437,9 +531,9 @@ final class ConsolePanels {
 
     private void decorate(Button b, boolean selected) {
         b.setSelected(selected);
-        b.setTextColor(selected ? 0xffffc7a6 : TEXT);
+        b.setTextColor(selected ? palette.selectedInk : palette.ink);
         b.setBackground(new RippleDrawable(ColorStateList.valueOf(0x48eba66f),
-                box(selected ? 0xff4b3026 : 0xff25232b, selected ? 0xff7d533e : 0xff3b353e, 9), null));
+                box(selected ? palette.selected : palette.inset, selected ? palette.selectedEdge : palette.edge, 9), null));
         b.setPadding(dp(9), 0, dp(9), 0);
     }
 
@@ -473,7 +567,10 @@ final class ConsolePanels {
     private void toggle(LinearLayout body, String value, boolean selected, Checked change) {
         Switch switchView = new Switch(activity);
         switchView.setText(value);
-        switchView.setTextColor(TEXT);
+        switchView.setTextColor(palette.ink);
+        int[][] states = {{android.R.attr.state_checked}, {}};
+        switchView.setThumbTintList(new ColorStateList(states, new int[]{palette.accent, palette.muted}));
+        switchView.setTrackTintList(new ColorStateList(states, new int[]{palette.selectedEdge, palette.edge}));
         switchView.setTextSize(13);
         switchView.setGravity(Gravity.CENTER_VERTICAL);
         switchView.setMinHeight(dp(46));
@@ -486,13 +583,13 @@ final class ConsolePanels {
         EditText entry = new EditText(activity);
         entry.setSingleLine(true);
         entry.setTextSize(14);
-        entry.setTextColor(TEXT);
-        entry.setHintTextColor(MUTED);
+        entry.setTextColor(palette.ink);
+        entry.setHintTextColor(palette.muted);
         entry.setHint(hint);
         entry.setContentDescription(hint);
         entry.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
         entry.setText(value);
-        entry.setBackground(box(0xff101116, 0xff45363f, 8));
+        entry.setBackground(box(palette.inset, palette.edge, 8));
         entry.setPadding(dp(11), 0, dp(11), 0);
         return entry;
     }

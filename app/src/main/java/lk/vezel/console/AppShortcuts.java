@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.app.role.RoleManager;
 import android.content.ComponentName;
 import android.content.Intent;
+import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.graphics.drawable.Drawable;
@@ -19,7 +20,17 @@ final class AppShortcuts {
     static final class Entry {
         final String name, pkg;
         final ResolveInfo activity;
-        Entry(String name, ResolveInfo info) { this.name = name; pkg = info.activityInfo.packageName; activity = info; }
+        final ComponentName component;
+        final int bluetoothScore;
+        Entry(String name, ResolveInfo info, boolean bluetooth) {
+            this.name = name;
+            pkg = info.activityInfo.packageName;
+            activity = info;
+            component = new ComponentName(pkg, info.activityInfo.name);
+            int flags = info.activityInfo.applicationInfo.flags;
+            bluetoothScore = bluetooth ? BluetoothAudioMatch.score(name, component.getClassName(),
+                    (flags & (ApplicationInfo.FLAG_SYSTEM | ApplicationInfo.FLAG_UPDATED_SYSTEM_APP)) != 0) : 0;
+        }
         Drawable icon(PackageManager manager) {
             try { return activity.loadIcon(manager); } catch (RuntimeException ignored) { return null; }
         }
@@ -45,12 +56,32 @@ final class AppShortcuts {
         } catch (RuntimeException ignored) { return false; }
     }
 
-    boolean launch(Entry entry) {
-        ResolveInfo info = entry.activity;
-        Intent intent = new Intent(Intent.ACTION_MAIN)
-                .setComponent(new ComponentName(entry.pkg, info.activityInfo.name))
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED);
-        return start(intent) || launch(entry.pkg);
+    boolean launch(Entry entry) { return launchActivity(entry.component) || launch(entry.pkg); }
+
+    private boolean launchActivity(ComponentName component) {
+        if (component == null || component.getPackageName().equals(activity.getPackageName())) return false;
+        return start(new Intent(Intent.ACTION_MAIN).setComponent(component)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED));
+    }
+
+    boolean launchBluetooth(String assigned) {
+        if (!assigned.isEmpty()) return launchActivity(ComponentName.unflattenFromString(assigned));
+        List<Entry> choices = bluetoothChoices();
+        if (choices.isEmpty()) return false;
+        Entry best = choices.get(0);
+        int score = best.bluetoothScore;
+        // Let the driver pick if no strong match exists or if the top score is tied.
+        return score > 0 && (choices.size() == 1 || choices.get(1).bluetoothScore < score)
+                && launchActivity(best.component);
+    }
+
+    String bluetoothLabel(String assigned) {
+        if (assigned.isEmpty()) return "Auto-detect";
+        try {
+            ComponentName component = ComponentName.unflattenFromString(assigned);
+            if (component != null) return manager.getActivityInfo(component, 0).loadLabel(manager).toString();
+        } catch (PackageManager.NameNotFoundException | RuntimeException ignored) { }
+        return "App unavailable";
     }
 
     boolean home() {
@@ -73,25 +104,32 @@ final class AppShortcuts {
         catch (Exception ignored) { return "App unavailable"; }
     }
 
-    List<Entry> list() {
+    List<Entry> list() { return list(false); }
+    List<Entry> bluetoothChoices() { return list(true); }
+
+    private List<Entry> list(boolean bluetooth) {
         Map<String, Entry> found = new LinkedHashMap<>();
-        collect(found, Intent.CATEGORY_LAUNCHER);
-        collect(found, Intent.CATEGORY_LEANBACK_LAUNCHER);
+        collect(found, Intent.CATEGORY_LAUNCHER, bluetooth);
+        collect(found, Intent.CATEGORY_LEANBACK_LAUNCHER, bluetooth);
         List<Entry> result = new ArrayList<>(found.values());
         Collator comparator = Collator.getInstance();
-        result.sort((a, b) -> comparator.compare(a.name, b.name));
+        result.sort((a, b) -> {
+            int byMatch = bluetooth ? Integer.compare(b.bluetoothScore, a.bluetoothScore) : 0;
+            return byMatch != 0 ? byMatch : comparator.compare(a.name, b.name);
+        });
         return result;
     }
 
-    private void collect(Map<String, Entry> result, String category) {
+    private void collect(Map<String, Entry> result, String category, boolean byComponent) {
         try {
             for (ResolveInfo info : manager.queryIntentActivities(new Intent(Intent.ACTION_MAIN).addCategory(category), 0)) {
-                if (info.activityInfo == null || !info.activityInfo.exported) continue;
+                if (info.activityInfo == null || info.activityInfo.applicationInfo == null || !info.activityInfo.exported) continue;
                 String pkg = info.activityInfo.packageName;
-                if (result.containsKey(pkg) || pkg.equals(activity.getPackageName())) continue;
+                String key = byComponent ? new ComponentName(pkg, info.activityInfo.name).flattenToString() : pkg;
+                if (result.containsKey(key) || pkg.equals(activity.getPackageName())) continue;
                 CharSequence label = null;
                 try { label = info.loadLabel(manager); } catch (RuntimeException ignored) { /* Use the package label below. */ }
-                result.put(pkg, new Entry(label == null || label.length() == 0 ? pkg : label.toString(), info));
+                result.put(key, new Entry(label == null || label.length() == 0 ? pkg : label.toString(), info, byComponent));
             }
         } catch (RuntimeException ignored) { /* Firmware may only expose a limited package list. */ }
     }

@@ -1,0 +1,10 @@
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape>
+            <size android:width="108dp" android:height="108dp"/>
+            <solid android:color="#101017"/>
+        </shape>
+    </item>
+    <!-- Keep the full badge inside the Android 12 splash's centre mask. -->
+    <item android:gravity="center" android:width="58dp" android:height="47dp" android:drawable="@drawable/honda_badge"/>
+</layer-list>

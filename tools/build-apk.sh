@@ -116,7 +116,7 @@ badging=$("$bt/aapt2" dump badging "$apk")
 [[ $badging == *'DashboardActivity'* && $badging == *"provides-component:'launcher'"* ]] || fail 'Home launcher activity not packaged'
 entries=$(unzip -Z1 "$apk")
 for entry in classes.dex assets/fonts/instrument.ttf assets/vezel-photo.webp assets/vezel-photo-lit.webp \
-  assets/audio/speed-warning.mp3 assets/audio/welcome.wav assets/audio/goodbye.wav; do
+  assets/dial-day.webp assets/dial-night.webp assets/audio/speed-warning.mp3 assets/audio/welcome.wav assets/audio/goodbye.wav; do
   grep -Fxq "$entry" <<< "$entries" || fail "missing $entry"
 done
 # MediaPlayer uses AssetManager.openFd, which requires an uncompressed audio entry.
