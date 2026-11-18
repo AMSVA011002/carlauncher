@@ -33,6 +33,7 @@ final class DashboardView extends ViewGroup {
     static final int STARTUP = 1, WEATHER = 2, NIGHT = 3, GPS = 4, LIMIT = 5, ROUTE = 6, LAMPS = 7,
             MEDIA = 8, PREVIOUS = 9, PLAY = 10, NEXT = 11, MAPS = 12, MUSIC = 13,
             PHONE = 14, RADIO = 15, SETTINGS = 16, APPS = 17, READ_SPEED = 18, READ_CLOCK = 19, SETUP = 20;
+    private static final int INSPECT = 21, CLOSE_INSPECTION = 22, FRONT_VIEW = 23, REAR_VIEW = 24, RESET_VIEW = 25;
     private static final int INK = 0xfff6efea, MUTED = 0xffaaa1a6, FAINT = 0xffafa3a0,
             AMBER = 0xffeea56e, EDGE = 0xff2c2b32, GREEN = 0xffa5d6bb;
     private static final String[] SHORTCUTS = {"Navigation", "Music", "Phone", "Radio", "Settings", "Apps"};
@@ -78,8 +79,10 @@ final class DashboardView extends ViewGroup {
             markFill = gradient(26, 19, 68, 61, 0xff35251e, 0xff221918),
             swatch = gradient(321, 444, 342, 469, 0xffad5c70, 0xff441321),
             arcGradient = gradient(65, 310, 247, 145, 0xffaa6443, 0xffffbb82);
-    private final Welcome welcome;
-    private boolean starting;
+    private final VehicleScene showroom;
+    private final View showroomChrome;
+    private final PowerScreen powerScreen;
+    private boolean starting, inspecting;
     private Bitmap carOff, carOn;
     private float scale = 1, offsetX, offsetY;
 
@@ -107,6 +110,10 @@ final class DashboardView extends ViewGroup {
         routeLines.lineTo(960, 124); routeLines.lineTo(985, 119);
         routeLines.moveTo(925, 198); routeLines.lineTo(941, 176); routeLines.lineTo(961, 168);
         routeLines.lineTo(984, 141);
+        showroom = new VehicleScene(context, this::showroomChanged, () -> inspection(true));
+        addView(showroom);
+        showroomChrome = new VehicleChrome(context);
+        addView(showroomChrome);
         target(STARTUP, 24, 11, 153, 66, "Replay Honda startup", actions);
         target(READ_CLOCK, 458, 11, 566, 66, "Clock", null);
         target(SETUP, 748, 14, 829, 63, "Complete launcher setup", actions);
@@ -114,7 +121,7 @@ final class DashboardView extends ViewGroup {
         target(NIGHT, 951, 13, 1000, 64, "Night display", actions);
         target(GPS, 187, 100, 278, 143, "Set up GPS", actions);
         target(READ_SPEED, 42, 145, 270, 305, "GPS speed", null);
-        target(LIMIT, 89, 309, 226, 354, "Set speed alert", actions);
+        target(LIMIT, 52, 308, 260, 354, "Set speed alert", actions);
         target(ROUTE, 728, 109, 983, 192, "Navigation", actions);
         target(LAMPS, 823, 429, 984, 478, "Headlights illustration", actions);
         target(MEDIA, 34, 508, 252, 571, "Music information", actions);
@@ -125,9 +132,15 @@ final class DashboardView extends ViewGroup {
             float left = 411 + i * 97.7f;
             target(MAPS + i, left, 507, left + 94.7f, 569, SHORTCUTS[i], actions);
         }
-        welcome = new Welcome(context);
-        welcome.setVisibility(GONE);
-        addView(welcome);
+        target(INSPECT, 532, 429, 770, 478, "Inspect the 3D car", this::vehicleAction);
+        target(CLOSE_INSPECTION, 889, 19, 1001, 72, "Close vehicle inspection", this::vehicleAction);
+        target(FRONT_VIEW, 708, 527, 793, 581, "Show front plate", this::vehicleAction);
+        target(REAR_VIEW, 796, 527, 881, 581, "Show rear plate and badges", this::vehicleAction);
+        target(RESET_VIEW, 884, 527, 1001, 581, "Reset vehicle view", this::vehicleAction);
+        powerScreen = new PowerScreen(context);
+        powerScreen.setVisibility(GONE);
+        addView(powerScreen);
+        updateTargets();
     }
 
     private void target(int key, float l, float t, float r, float b, String name, Actions actions) {
@@ -142,43 +155,105 @@ final class DashboardView extends ViewGroup {
     }
 
     void refresh() {
-        if (!starting) {
+        showroom.appearance(data.lamps, data.night);
+        if (!starting && !inspecting) {
             hit.get(SETUP).setVisibility(data.setupNeeded ? VISIBLE : INVISIBLE);
             hit.get(READ_SPEED).description((data.speed < 0 ? "GPS speed unavailable" : data.speed + " kilometres per hour")
                     + ", trip " + data.trip + " kilometres, drive time " + data.drive
-                    + (data.heading >= 0 ? ", heading " + TripMeter.compass(data.heading) + " " + data.heading + " degrees" : ""));
+                    + (data.heading >= 0 ? ", heading " + TripMeter.compass(data.heading) + " " + data.heading + " degrees" : "")
+                    + (data.over ? ", speed limit reached" : ""));
             hit.get(READ_CLOCK).description(data.clock + " " + data.period + ", " + data.date);
             hit.get(GPS).description(data.gps + ", GPS settings");
             hit.get(NIGHT).description(data.night ? "Switch to day display" : "Switch to night display");
-            hit.get(LAMPS).description(data.lamps ? "Headlight illustration on. Tap to turn off" : "Headlight illustration off. Tap to turn on");
+            hit.get(LAMPS).description(data.lamps ? "Headlights and fog lights illustration on. Tap to turn off" : "Headlights and fog lights illustration off. Tap to turn on");
             hit.get(WEATHER).description("Weather: " + data.temperature + " " + data.place);
             hit.get(LIMIT).description(data.speedAlert ? "Speed alert: " + data.limit + " kilometres per hour" : "Speed alert off. Tap for settings");
             hit.get(PLAY).description(data.playing ? "Pause" : "Play");
             hit.get(MEDIA).description(data.track + ", " + data.artist);
             hit.get(ROUTE).description(data.hint == null ? "Open navigation" : data.hint.distance + " " + data.hint.instruction);
         }
+        showroomChrome.invalidate();
         invalidate();
     }
 
-    void showWelcome() {
-        welcome.animate().cancel();
-        welcome.setAlpha(1f);
-        starting = true;
-        for (int i = 0; i < hit.size(); i++) hit.valueAt(i).setVisibility(INVISIBLE);
-        welcome.setVisibility(VISIBLE);
-        welcome.animate().alpha(0f).setStartDelay(1_150L).setDuration(400L).withEndAction(this::hideWelcome).start();
+    private void updateTargets() {
+        for (int i = 0; i < hit.size(); i++) {
+            int key = hit.keyAt(i);
+            boolean visible = !starting && (inspecting ? key >= CLOSE_INSPECTION
+                    : key < CLOSE_INSPECTION && (key != SETUP || data.setupNeeded) && (key != INSPECT || showroom.ready()));
+            hit.valueAt(i).setVisibility(visible ? VISIBLE : INVISIBLE);
+        }
+        showroom.setGestures(!starting);
     }
 
-    void hideWelcome() {
-        if (!starting) return;
-        starting = false;
-        welcome.animate().cancel();
-        welcome.setVisibility(GONE);
-        for (int i = 0; i < hit.size(); i++) hit.valueAt(i).setVisibility(VISIBLE);
+    private void showroomChanged() {
+        if (showroom.ready()) {
+            carOff = carOn = null;
+        } else if (inspecting) {
+            inspection(false);
+        }
+        updateTargets();
         refresh();
     }
 
-    void trimCarCache() { if (data.lamps) carOff = null; else carOn = null; }
+    void setActive(boolean active) { showroom.setActive(active); }
+
+    boolean closeInspection() {
+        if (!inspecting) return false;
+        inspection(false);
+        return true;
+    }
+
+    private void inspection(boolean enabled) {
+        if (inspecting == enabled || (enabled && (starting || !showroom.ready()))) return;
+        inspecting = enabled;
+        showroom.inspection(enabled);
+        updateTargets();
+        if (!isInTouchMode()) hit.get(enabled ? CLOSE_INSPECTION : INSPECT).requestFocus();
+        requestLayout();
+        refresh();
+    }
+
+    private void vehicleAction(int key) {
+        switch (key) {
+            case INSPECT: inspection(true); break;
+            case CLOSE_INSPECTION: inspection(false); break;
+            case FRONT_VIEW: showroom.preset(1); break;
+            case REAR_VIEW: showroom.preset(2); break;
+            case RESET_VIEW: showroom.preset(0); break;
+        }
+    }
+
+    void showPowerScreen(boolean leaving) {
+        powerScreen.animate().cancel();
+        powerScreen.setAlpha(1f);
+        powerScreen.leaving = leaving;
+        powerScreen.setContentDescription(leaving ? "Honda. Good Bye." : "Honda. Welcome.");
+        closeInspection();
+        starting = true;
+        updateTargets();
+        powerScreen.setVisibility(VISIBLE);
+        powerScreen.invalidate();
+        powerScreen.animate().alpha(0f).setStartDelay(leaving ? 2_500L : 2_220L)
+                .setDuration(380L).withEndAction(this::hidePowerScreen).start();
+    }
+
+    boolean showingGoodbye() { return starting && powerScreen.leaving; }
+
+    boolean hidePowerScreen() {
+        if (!starting) return false;
+        starting = false;
+        powerScreen.animate().cancel();
+        powerScreen.setVisibility(GONE);
+        updateTargets();
+        refresh();
+        return true;
+    }
+
+    void trimCarCache() {
+        if (showroom.ready() || data.lamps) carOff = null;
+        if (showroom.ready() || !data.lamps) carOn = null;
+    }
 
     @Override protected void onMeasure(int wSpec, int hSpec) {
         int w = MeasureSpec.getSize(wSpec), h = MeasureSpec.getSize(hSpec);
@@ -190,7 +265,10 @@ final class DashboardView extends ViewGroup {
             Target v = hit.valueAt(i);
             v.measure(exact(Math.round(v.area.width() * scale)), exact(Math.round(v.area.height() * scale)));
         }
-        welcome.measure(exact(w), exact(h));
+        showroom.measure(exact(Math.round((inspecting ? W : 696) * scale)),
+                exact(Math.round((inspecting ? H : 393) * scale)));
+        showroomChrome.measure(exact(w), exact(h));
+        powerScreen.measure(exact(w), exact(h));
     }
 
     @Override protected void onLayout(boolean changed, int l, int t, int r, int b) {
@@ -199,11 +277,16 @@ final class DashboardView extends ViewGroup {
             int x = Math.round(offsetX + v.area.left * scale), y = Math.round(offsetY + v.area.top * scale);
             v.layout(x, y, x + v.getMeasuredWidth(), y + v.getMeasuredHeight());
         }
-        welcome.layout(0, 0, r - l, b - t);
+        int x = Math.round(offsetX + (inspecting ? 0 : 303) * scale);
+        int y = Math.round(offsetY + (inspecting ? 0 : 93) * scale);
+        showroom.layout(x, y, x + showroom.getMeasuredWidth(), y + showroom.getMeasuredHeight());
+        showroomChrome.layout(0, 0, r - l, b - t);
+        powerScreen.layout(0, 0, r - l, b - t);
     }
 
     @Override protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
+        if (inspecting) return;
         canvas.save();
         canvas.translate(offsetX, offsetY);
         canvas.scale(scale, scale);
@@ -212,7 +295,7 @@ final class DashboardView extends ViewGroup {
         round(canvas, 0, 0, W, H, 0, INK, warmTop);
         header(canvas);
         instruments(canvas);
-        vehicle(canvas);
+        vehicleBase(canvas);
         dock(canvas);
         letter(canvas, "RU3 EDITION  /  HONDA VEZEL", 25, 591, 8, mono, 0xff918488, .7f);
         right(canvas, "DRIVE CONSOLE   /   1024 × 600", 999, 591, 8, mono, 0xff918488);
@@ -277,10 +360,17 @@ final class DashboardView extends ViewGroup {
         center(c, data.speed < 0 ? "—" : Integer.toString(data.speed), 156, 265,
                 data.speed >= 100 ? 68 : 85, instrument, data.over ? 0xffffb890 : 0xfff8f3ed);
         center(c, "km/h", 156, 297, 14, instrument, 0xffb7adb0);
-        circle(c, 119, 330, 13.5f, data.over ? 0xfff1a175 : 0xffb65851);
-        circle(c, 119, 330, 11.5f, data.over ? 0xfff1a175 : 0xfff1e8e3);
-        center(c, data.speedAlert ? Integer.toString(data.limit) : "–", 119, 334.5f, 12, instrument, 0xff291d21);
-        letter(c, "SPEED ALERT", 140, 333, 8.5f, mono, FAINT, .8f);
+        if (data.over) {
+            panel(c, 52, 308, 260, 350, 8, 0xff482821, 0xffa86b4f);
+            icon(c, R.drawable.ic_warning, 64, 317, 23, 0xffffbd85);
+            letter(c, "LIMIT REACHED", 99, 326, 10, mono, 0xffffc98f, .65f);
+            text(c, data.limit + " km/h  ·  Slow down", 99, 342, 10.5f, bold, 0xffe8b1a0);
+        } else {
+            circle(c, 119, 330, 13.5f, 0xffb65851);
+            circle(c, 119, 330, 11.5f, 0xfff1e8e3);
+            center(c, data.speedAlert ? Integer.toString(data.limit) : "–", 119, 334.5f, 12, instrument, 0xff291d21);
+            letter(c, "SPEED ALERT", 140, 333, 8.5f, mono, FAINT, .8f);
+        }
         line(c, 42, 362, 270, 362, 1, 0xff2a282e);
         line(c, 156, 376, 156, 417, 1, 0xff2a282e);
         letter(c, "TRIP DISTANCE", 43, 384, 8.5f, mono, MUTED, .55f);
@@ -297,7 +387,8 @@ final class DashboardView extends ViewGroup {
         if (data.heading >= 0) right(c, TripMeter.compass(data.heading), 257 - width(degrees, 12, instrument), 460, 12, instrument, INK);
     }
 
-    private void vehicle(Canvas c) {
+    private void vehicleBase(Canvas c) {
+        if (showroom.ready()) return;
         c.save();
         c.clipPath(stage);
         round(c, 302, 92, 1000, 487, 0, 0xff100d10, null);
@@ -306,6 +397,12 @@ final class DashboardView extends ViewGroup {
             centerCrop(c, photo, 303, 93, 999, 486);
             if (data.night) round(c, 302, 92, 1000, 487, 0, 0x38090409, null);
         }
+        c.restore();
+    }
+
+    private void vehicleOverlay(Canvas c) {
+        c.save();
+        c.clipPath(stage);
         round(c, 302, 92, 1000, 487, 0, INK, stageTop);
         round(c, 302, 392, 1000, 487, 0, INK, stageHeel);
         c.restore();
@@ -324,7 +421,55 @@ final class DashboardView extends ViewGroup {
         text(c, "Wine Red", 351, 467, 12, bold, 0xffefe3e3);
         panel(c, 830, 438, 983, 474, 8, data.lamps ? 0xff18241f : 0xff18171d, data.lamps ? 0xff385246 : 0xff453e45);
         icon(c, R.drawable.ic_headlights, 841, 447, 18, data.lamps ? GREEN : MUTED);
-        letter(c, data.lamps ? "HEADLIGHTS ON" : "HEADLIGHTS OFF", 867, 459, 9, mono, data.lamps ? GREEN : MUTED, .65f);
+        letter(c, data.lamps ? "LIGHTS + FOG ON" : "LIGHTS + FOG OFF", 867, 459, 9, mono, data.lamps ? GREEN : MUTED, .65f);
+        if (showroom.ready()) {
+            panel(c, 535, 438, 767, 474, 8, 0xe8251b20, 0xff604748);
+            text(c, "360°", 547, 460, 12, mono, 0xfff3b28b);
+            letter(c, "DRAG TO ROTATE", 583, 459, 8.5f, mono, MUTED, .45f);
+            line(c, 670, 448, 670, 465, 1, 0xff604748);
+            text(c, "Inspect", 681, 460, 12, bold, INK);
+            line(c, 748, 451, 754, 451, 1.3f, INK); line(c, 754, 451, 754, 457, 1.3f, INK);
+            line(c, 754, 451, 747, 458, 1.3f, INK);
+            line(c, 742, 457, 742, 463, 1.3f, INK); line(c, 742, 463, 748, 463, 1.3f, INK);
+            line(c, 742, 463, 746, 459, 1.3f, INK);
+        }
+        if (data.night) round(c, 302, 92, 1000, 487, 16, 0x2109050b, null);
+    }
+
+    private final class VehicleChrome extends View {
+        private final Shader titleShade = gradient(0, 0, 0, 121, 0xb8110e13, 0x00110e13),
+                controlsShade = gradient(0, 497, 0, 600, 0x000e0c10, 0xe80e0c10);
+
+        VehicleChrome(Context context) {
+            super(context);
+            setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
+        }
+
+        @Override protected void onDraw(Canvas canvas) {
+            canvas.save();
+            canvas.translate(offsetX, offsetY);
+            canvas.scale(scale, scale);
+            if (inspecting) {
+                round(canvas, 0, 0, W, 121, 0, INK, titleShade);
+                round(canvas, 0, 497, W, H, 0, INK, controlsShade);
+                line(canvas, 27, 30, 41, 30, 1, AMBER);
+                letter(canvas, "VEHICLE INSPECTION", 48, 33, 10, mono, AMBER, 1.15f);
+                text(canvas, "Honda Vezel", 26, 69, 36, instrument, INK);
+                letter(canvas, "2014  /  HYBRID RU3", 28, 89, 9, mono, MUTED, .95f);
+                inspectionButton(canvas, "Close", 893, 25, 998, 68);
+                inspectionButton(canvas, "Front", 711, 533, 790, 577);
+                inspectionButton(canvas, "Rear", 799, 533, 878, 577);
+                inspectionButton(canvas, "Reset view", 887, 533, 998, 577);
+                letter(canvas, "DRAG TO ROTATE  ·  PINCH TO ZOOM", 27, 560, 10, mono, 0xffc9b2b3, .55f);
+                if (data.night) round(canvas, 0, 0, W, H, 0, 0x2109050b, null);
+            } else vehicleOverlay(canvas);
+            canvas.restore();
+        }
+
+        private void inspectionButton(Canvas c, String label, int l, int t, int r, int b) {
+            panel(c, l, t, r, b, 9, 0xed241c23, 0xff58434a);
+            center(c, label, (l + r) / 2f, (t + b) / 2f + 4, 13, bold, INK);
+        }
     }
 
     private void route(Canvas c) {
@@ -388,7 +533,8 @@ final class DashboardView extends ViewGroup {
             BitmapFactory.Options options = new BitmapFactory.Options();
             options.inPreferredConfig = Bitmap.Config.RGB_565;
             Bitmap decoded = BitmapFactory.decodeStream(input, null, options);
-            if (lit) carOn = decoded; else carOff = decoded;
+            if (lit) { carOn = decoded; carOff = null; }
+            else { carOff = decoded; carOn = null; }
             return decoded;
         } catch (IOException ignored) { return null; }
     }
@@ -526,17 +672,19 @@ final class DashboardView extends ViewGroup {
         }
     }
 
-    private final class Welcome extends View {
+    private final class PowerScreen extends View {
+        boolean leaving;
         private final Shader background = new RadialGradient(512, 282, 380, new int[]{0xff302018, 0xff100d10, 0xff09090b},
                 new float[]{0, .62f, 1f}, Shader.TileMode.CLAMP);
         private final Shader halo = new RadialGradient(512, 267, 139, 0x52ffb95a, 0x00ffb95a, Shader.TileMode.CLAMP);
         private Bitmap logo, logoGlow;
         private final int[] glowOffset = new int[2];
 
-        Welcome(Context context) {
+        PowerScreen(Context context) {
             super(context);
             setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_YES);
-            setContentDescription("Honda. Vezel Drive Console.");
+            setAccessibilityLiveRegion(ACCESSIBILITY_LIVE_REGION_POLITE);
+            setClickable(true); // Cover the dashboard during the short sequence.
         }
 
         @Override protected void onDraw(Canvas c) {
@@ -565,10 +713,13 @@ final class DashboardView extends ViewGroup {
                 c.drawBitmap(logoGlow, null, box, paint);
             }
             centerCrop(c, logo, 443, 190, 581, 328);
-            String name = "HONDA";
-            letter(c, name, 512 - (width(name, 25, instrument) + 44) / 2, 358, 25, instrument, 0xffeac483, 11);
-            String sub = "VEZEL DRIVE CONSOLE";
-            letter(c, sub, 512 - (width(sub, 8.8f, mono) + 45) / 2, 381, 8.8f, mono, 0xffbc926c, 2.5f);
+            String greeting = leaving ? "GOOD BYE" : "Welcome";
+            float tracking = leaving ? 6 : 3.3f;
+            float size = 37;
+            letter(c, greeting, 512 - (width(greeting, size, instrument) + (greeting.length() - 1) * tracking) / 2,
+                    365, size, instrument, 0xffffd98f, tracking);
+            String sub = "H O N D A   /   V E Z E L";
+            center(c, sub, 512, 395, 9.5f, mono, 0xffb99066);
             c.restore();
         }
     }

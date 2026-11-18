@@ -5,7 +5,9 @@ public final class LogicTest {
         tripAndAlert();
         navigation();
         lights();
-        System.out.println("Trip, speed alert, notification parsing and illumination tests passed.");
+        camera();
+        power();
+        System.out.println("Trip, speed alert, notification, illumination, power cue and 3D camera tests passed.");
     }
 
     private static void tripAndAlert() {
@@ -40,6 +42,24 @@ public final class LogicTest {
                 "Infer movement and heading from accurate displacement");
         check(inferred.meters() > 11 && inferred.meters() < 12 && inferred.movingMs() == 1_000,
                 "Count the first reliable displacement in trip totals");
+        TripMeter equal = new TripMeter(0, 0);
+        check(!equal.accept(fix(1000, 4, 60/3.6)) && equal.limitReached(1000), "Show the warning at the selected limit");
+        check(equal.accept(fix(2000, 4, 60/3.6)), "Speak after two valid fixes at the threshold, not only above it");
+        check(!equal.accept(fix(3000, 4, 58/3.6)) && !equal.limitReached(3000), "Hide visual warning below the threshold");
+        check(!equal.accept(fix(4000, 4, 60/3.6)) && !equal.accept(fix(5000, 4, 60/3.6)), "Avoid a repeated warning during small fluctuations");
+        check(!equal.limitReached(14000), "Hide warning when the GPS speed is stale");
+    }
+
+    private static void power() {
+        PowerCue state = new PowerCue();
+        check(state.update(null) == PowerCue.Event.NONE, "Ignore malformed ACC state");
+        check(state.update(true) == PowerCue.Event.NONE, "Do not replay Welcome on duplicate ignition-on");
+        check(state.update(LightSignal.read("OFF")) == PowerCue.Event.GOODBYE, "Key-off edge cues goodbye");
+        check(state.update(false) == PowerCue.Event.NONE, "Suppress duplicate key-off");
+        check(state.update(LightSignal.read(1)) == PowerCue.Event.WELCOME, "Key-on cues welcome after key-off");
+        state.reset();
+        check(state.update(true) == PowerCue.Event.NONE, "Wake transition resets the edge tracker");
+        check(PowerCue.validAction("com.example.ACC_STATE") && !PowerCue.validAction("not an action"), "Validate the configured OEM action");
     }
 
     private static TripMeter.Fix fix(long ms, double accuracy, double speed) {
@@ -79,6 +99,31 @@ public final class LogicTest {
         check(!LightSignal.enabled(0, false, true), "OEM source wins over system appearance");
         check(LightSignal.enabled(1, false, false) && !LightSignal.enabled(2, true, true), "Manual override");
         check(LightSignal.night(0, true, false) && !LightSignal.night(2, true, true), "Auto and manual night");
+    }
+
+    private static void camera() {
+        float[] matrix = new float[16], eye = new float[3];
+        for (int i = 0; i < 4; i++) {
+            VehicleCamera.project(matrix, eye, i * VehicleCamera.TURN / 4, .24f, 1, false, 696f / 393f);
+            double angle = Math.atan2(eye[2], eye[0]);
+            check(Math.abs(Math.IEEEremainder(angle - i * Math.PI / 2, 2 * Math.PI)) < .001, "Full camera orbit");
+        }
+        VehicleCamera.project(matrix, eye, 0, VehicleCamera.CLOSE_PITCH, VehicleCamera.CLOSE_ZOOM, true, 1024f / 600f);
+        check(projected(matrix, 0, 2.23f, .52f, .29f) < 0, "Front plate is right-reading");
+        check(projected(matrix, 1, 2.23f, .465f, -.29f) > -.78f, "Front plate is above the inspector buttons");
+        VehicleCamera.project(matrix, eye, VehicleCamera.TURN / 2, VehicleCamera.CLOSE_PITCH, VehicleCamera.CLOSE_ZOOM, true, 1024f / 600f);
+        check(projected(matrix, 0, -2.22f, .79f, -.17f) < 0, "Rear plate is right-reading");
+        check(projected(matrix, 1, -2.22f, .68f, -.17f) > -.78f, "Rear plate is above the inspector buttons");
+        VehicleCamera.project(matrix, eye, .9f, VehicleCamera.MAX_PITCH, 1, true, 1024f / 600f);
+        check(eye[1] > 6, "Orbit can see the roof");
+        VehicleCamera.project(matrix, eye, 0, VehicleCamera.MAX_PITCH, 1, false, 696f / 393f);
+        check(projected(matrix, 1, 2.22f, .86f, .7f) > -.78f && projected(matrix, 1, -2.22f, 1.11f, .79f) < .57f,
+                "A steep dashboard orbit keeps both ends clear of the controls");
+    }
+
+    private static float projected(float[] m, int row, float x, float y, float z) {
+        return (m[row] * x + m[row + 4] * y + m[row + 8] * z + m[row + 12]) /
+                (m[3] * x + m[7] * y + m[11] * z + m[15]);
     }
 
     private static void check(boolean condition, String description) {

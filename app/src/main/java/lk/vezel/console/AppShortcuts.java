@@ -89,8 +89,9 @@ final class AppShortcuts {
                 if (info.activityInfo == null || !info.activityInfo.exported) continue;
                 String pkg = info.activityInfo.packageName;
                 if (result.containsKey(pkg) || pkg.equals(activity.getPackageName())) continue;
-                CharSequence label = info.loadLabel(manager);
-                result.put(pkg, new Entry(label == null ? pkg : label.toString(), info));
+                CharSequence label = null;
+                try { label = info.loadLabel(manager); } catch (RuntimeException ignored) { /* Use the package label below. */ }
+                result.put(pkg, new Entry(label == null || label.length() == 0 ? pkg : label.toString(), info));
             }
         } catch (RuntimeException ignored) { /* Firmware may only expose a limited package list. */ }
     }
