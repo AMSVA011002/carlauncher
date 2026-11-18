@@ -1,4 +1,4 @@
-"""Check the two offline photo assets without Pillow or a graphics runtime."""
+"""Check both offline vehicle photo pairs without Pillow or a graphics runtime."""
 from pathlib import Path
 import struct
 
@@ -20,11 +20,12 @@ def pixels(content):
     return tuple(n & 0x3fff for n in struct.unpack_from('<HH', content, 26))
 
 
-source = (SHARED / 'vezel-photo.webp').read_bytes()
-lit = (SHARED / 'vezel-photo-lit.webp').read_bytes()
-assert pixels(source) == pixels(lit) == (1024, 576), 'Lighting states must use the same uncropped composition'
-assert source != lit, 'Lights need a distinct frame'
-assert len(source) + len(lit) < 150_000, 'Keep the photo assets lightweight'
+for label, stem, height, budget in [('Day', 'vezel-photo-day', 572, 220_000), ('Night', 'vezel-photo', 576, 150_000)]:
+    source = (SHARED / f'{stem}.webp').read_bytes()
+    lit = (SHARED / f'{stem}-lit.webp').read_bytes()
+    assert pixels(source) == pixels(lit) == (1024, height), f'{label} lights must use the same uncropped composition'
+    assert source != lit, f'{label} lights need a distinct frame'
+    assert len(source) + len(lit) < budget, f'Keep the {label.lower()} photo assets lightweight'
 assert not list(SHARED.rglob('registration.txt')), 'The default build must not include a personal registration'
 assert not list(SHARED.rglob('*.mesh')), 'Photo edition does not need a 3D asset'
-print('Reference photo, lighting states and asset budgets passed.')
+print('Day and night reference photos, lighting states and asset budgets passed.')
