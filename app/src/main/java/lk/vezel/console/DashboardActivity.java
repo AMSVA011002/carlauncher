@@ -12,7 +12,6 @@ import android.content.pm.PackageManager;
 import android.content.pm.PermissionInfo;
 import android.content.res.Configuration;
 import android.location.Location;
-import android.location.LocationListener;
 import android.location.LocationManager;
 import android.media.AudioManager;
 import android.net.Uri;
@@ -20,7 +19,6 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
-import android.os.PowerManager;
 import android.os.SystemClock;
 import android.provider.Settings;
 import android.text.format.DateFormat;
@@ -35,8 +33,8 @@ import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
 
-public final class DashboardActivity extends Activity implements LocationListener {
-    private static final int LOCATION_REQUEST = 31, HOME_REQUEST = 32;
+public final class DashboardActivity extends Activity {
+    private static final int LOCATION_REQUEST = 31, HOME_REQUEST = 32, TRIP_NOTIFICATION_REQUEST = 33;
     static final String SETTINGS_NAME = "vezel_settings", BT_AUDIO = "shortcut_bt_audio",
             LIMIT = "speed_limit", ALERT = "speed_alert",
             ACC_ACTION = "ignition_action", ACC_EXTRA = "ignition_extra", ACC_PERMISSION = "ignition_permission",
@@ -49,12 +47,14 @@ public final class DashboardActivity extends Activity implements LocationListene
     WeatherClient weather;
     HeadlightSync lights;
     private final Runnable appearanceChanged = this::appearance;
+    private final DriveTracking.Observer telemetryChanged = this::telemetry;
     private LocationManager locations;
     private DashboardView dashboard;
     private ConsolePanels panels;
+    private DriveTracking tracking;
     private TripMeter trip;
-    private boolean started, working, gpsListening, providerEnabled, screenRegistered, destroyed;
-    private long offAt = -1, wakeUntil = -1, saveAt = -1, clockMinute = -1;
+    private boolean started, resumed, working, screenRegistered, destroyed;
+    private long offAt = -1, clockMinute = -1;
     private int previousSpeed = -2;
     private boolean previousFix, clock24, homeSelected;
     private BroadcastReceiver ignitionReceiver;
@@ -65,7 +65,7 @@ public final class DashboardActivity extends Activity implements LocationListene
     private boolean weatherCached;
     private long weatherStamp = -1;
     private final Runnable resumeAfterWelcome = () -> {
-        if (working && !shuttingDown && homeLaunch()) {
+        if (working && resumed && hasWindowFocus() && !shuttingDown && homeLaunch() && !playbackActive()) {
             media.requestResume();
             media.refresh();
         }
@@ -91,15 +91,20 @@ public final class DashboardActivity extends Activity implements LocationListene
                 dashboard.hidePowerScreen();
                 setWorking(false);
             } else if (Intent.ACTION_SCREEN_ON.equals(action)) {
-                long now = SystemClock.elapsedRealtime();
-                if (offAt >= 0 && now - offAt >= 8_000L) wakeUntil = now + 15_000L;
+                boolean woke = offAt >= 0 && SystemClock.elapsedRealtime() - offAt >= 8_000L && homeLaunch();
                 offAt = -1;
-                if (started) { handleWake(); setWorking(true); }
+                if (started) {
+                    setWorking(true);
+                    if (woke) { ignition.reset(); welcomeFromPower(); }
+                    else showStartup();
+                    updateTracking();
+                }
             } else if (Intent.ACTION_SHUTDOWN.equals(action)) {
                 shuttingDown = true;
+                tracking.shutdown();
                 beginGoodbye();
             } else if (LocationManager.PROVIDERS_CHANGED_ACTION.equals(action) && working) {
-                startGps(); render();
+                updateTracking();
             }
         }
     };
@@ -113,8 +118,8 @@ public final class DashboardActivity extends Activity implements LocationListene
         setVolumeControlStream(AudioManager.STREAM_MUSIC);
         welcomePending = saved == null;
         homeSelected = apps.home();
-        trip = new TripMeter(prefs.getFloat("trip_meters", 0f), prefs.getLong("trip_moving", 0L));
-        trip.alert(limit(), alertEnabled());
+        tracking = DriveTracking.get(this);
+        trip = tracking.trip;
         locations = getSystemService(LocationManager.class);
         dashboard = new DashboardView(this, this::dispatch);
         dashboard.data.dialGauge = prefs.getBoolean(DIAL_GAUGE, true);
@@ -147,31 +152,44 @@ public final class DashboardActivity extends Activity implements LocationListene
     @Override protected void onStart() {
         super.onStart();
         started = true;
-        if (interactive()) { handleWake(); setWorking(true); }
+        if (interactive()) { setWorking(true); showStartup(); }
     }
 
     @Override protected void onResume() {
         super.onResume();
+        resumed = true;
         immersive();
         clock24 = DateFormat.is24HourFormat(this);
         clockMinute = -1;
         homeSelected = apps.home();
         if (working) {
-            startGps();
+            useLastWeatherLocation();
+            updateTracking();
             media.refresh();
         }
         render();
+    }
+
+    @Override protected void onPause() {
+        resumed = false;
+        cancelAutomaticResume();
+        audio.stop();
+        super.onPause();
     }
 
     @Override protected void onStop() {
         started = false;
         dashboard.hidePowerScreen();
         setWorking(false);
+        // A running GPS service should not keep the dashboard's large images in memory.
+        dashboard.trimCarCache();
+        dashboard.data.art = null;
         super.onStop();
     }
 
     @Override protected void onDestroy() {
         destroyed = true;
+        tracking.unobserve(telemetryChanged);
         lights.unwatch(appearanceChanged);
         if (panels != null) panels.dismiss();
         if (screenRegistered) unregisterQuietly(screen);
@@ -186,7 +204,11 @@ public final class DashboardActivity extends Activity implements LocationListene
         super.onNewIntent(intent);
         setIntent(intent);
         homeSelected = apps.home();
-        if (intent.hasCategory(Intent.CATEGORY_HOME) && panels != null) panels.dismiss();
+        if (intent.hasCategory(Intent.CATEGORY_HOME)) {
+            cancelAutomaticResume();
+            audio.stopGreeting();
+            if (panels != null) panels.dismiss();
+        }
         immersive();
         render();
     }
@@ -199,7 +221,10 @@ public final class DashboardActivity extends Activity implements LocationListene
 
     @Override public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
-        if (hasFocus) immersive();
+        if (hasFocus) {
+            immersive();
+            if (resumed && working) TripTrackingService.startFromDashboard(this, tracking);
+        }
     }
 
     @Override public void onTrimMemory(int level) {
@@ -216,23 +241,32 @@ public final class DashboardActivity extends Activity implements LocationListene
     boolean homeSelected() { return homeSelected; }
     private boolean homeLaunch() { return (getIntent() != null && getIntent().hasCategory(Intent.CATEGORY_HOME)) || homeSelected; }
 
-    private boolean interactive() {
-        PowerManager power = getSystemService(PowerManager.class);
-        return power == null || power.isInteractive();
+    private boolean interactive() { return tracking.interactive(); }
+
+    private void showStartup() {
+        if (!welcomePending || shuttingDown) return;
+        welcomePending = false;
+        // A cold Home entry can be a return from another app after memory pressure, not a key-on.
+        // Show the welcome screen but leave audio focus and existing playback alone.
+        showWelcome();
     }
 
-    private void handleWake() {
-        long now = SystemClock.elapsedRealtime();
-        boolean woke = now <= wakeUntil && homeLaunch();
-        wakeUntil = -1;
-        if (shuttingDown || (!welcomePending && !woke)) return;
+    private void welcomeFromPower() {
+        if (shuttingDown || !working) return;
         welcomePending = false;
-        if (woke) ignition.reset();
-        if (now - lastWelcome > 3_000L || dashboard.showingGoodbye()) {
-            replayWelcome();
-            main.removeCallbacks(resumeAfterWelcome);
-            if (homeLaunch()) main.postDelayed(resumeAfterWelcome, 2_600L);
-        }
+        if (SystemClock.elapsedRealtime() - lastWelcome <= 3_000L && !dashboard.showingGoodbye()) return;
+        showWelcome();
+        if (!resumed || !hasWindowFocus() || playbackActive()) return;
+        if (powerTones()) audio.play(DriveAudio.Cue.WELCOME);
+        cancelAutomaticResume();
+        if (homeLaunch()) main.postDelayed(resumeAfterWelcome, 2_600L);
+    }
+
+    private boolean playbackActive() { return media.playing() || audio.musicActive(); }
+
+    private void cancelAutomaticResume() {
+        main.removeCallbacks(resumeAfterWelcome);
+        media.cancelResume();
     }
 
     private void setWorking(boolean on) {
@@ -240,36 +274,39 @@ public final class DashboardActivity extends Activity implements LocationListene
         working = on;
         if (on) {
             lights.watch(appearanceChanged);
-            media.start();
-            startGps();
+            media.startWatching();
+            useLastWeatherLocation();
+            tracking.observe(telemetryChanged);
             weather.refresh(false);
             main.removeCallbacks(pulse);
             main.postDelayed(pulse, 1_000L);
         } else {
             lights.unwatch(appearanceChanged);
             main.removeCallbacks(pulse);
-            main.removeCallbacks(resumeAfterWelcome);
-            media.stop();
-            media.cancelResume();
-            stopGps();
-            persistTrip();
+            cancelAutomaticResume();
+            media.stopWatching();
+            // Detach the UI, not the trip service. Another app may now be in front.
+            tracking.unobserve(telemetryChanged);
             audio.stop();
         }
     }
 
     private void immersive() { ConsoleWindow.immersive(this); }
 
-    boolean preciseGps() { return checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED; }
+    boolean preciseGps() { return tracking.precise(); }
     private boolean coarseGps() { return checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED; }
 
     void requestGps() {
         if (preciseGps()) {
-            if (!providerEnabled && !apps.start(new Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))) toast("Android location settings are not available.");
-            else if (providerEnabled) toast("Waiting for a GPS fix. Clear sky helps.");
+            updateTracking();
+            if (!tracking.providerEnabled()) {
+                if (!apps.startExternal(new Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))) toast("Android location settings are not available.");
+            } else if (!tracking.sampling()) toast("GPS updates are unavailable. Check Android location settings.");
+            else toast(trip.hasFix(SystemClock.elapsedRealtime()) ? "GPS is active." : "Waiting for a GPS fix. Clear sky helps.");
             return;
         }
         if (prefs.getBoolean("asked_gps", false) && !shouldShowRequestPermissionRationale(Manifest.permission.ACCESS_FINE_LOCATION)) {
-            if (apps.start(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + getPackageName())))) return;
+            if (apps.startExternal(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + getPackageName())))) return;
         }
         prefs.edit().putBoolean("asked_gps", true).apply();
         requestPermissions(new String[]{Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION}, LOCATION_REQUEST);
@@ -277,27 +314,39 @@ public final class DashboardActivity extends Activity implements LocationListene
 
     @Override public void onRequestPermissionsResult(int request, String[] permissions, int[] result) {
         super.onRequestPermissionsResult(request, permissions, result);
-        if (request == LOCATION_REQUEST && working) { startGps(); weather.refresh(false); render(); }
+        if (request == LOCATION_REQUEST && working) {
+            useLastWeatherLocation();
+            updateTracking();
+            weather.refresh(false);
+        }
     }
 
-    @SuppressWarnings("MissingPermission")
-    private void startGps() {
-        if (locations == null || !working) return;
-        boolean fine = preciseGps();
-        if (!fine && !coarseGps()) weather.clearLocation();
-        else useLastWeatherLocation();
-        try { providerEnabled = locations.isProviderEnabled(LocationManager.GPS_PROVIDER); }
-        catch (RuntimeException ignored) { providerEnabled = false; }
-        if (!fine || !providerEnabled) { stopGps(); return; }
-        if (gpsListening) return;
-        try {
-            locations.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1_000L, 0f, this, Looper.getMainLooper());
-            gpsListening = true;
-        } catch (RuntimeException ignored) { gpsListening = false; }
+    private void updateTracking() {
+        if (!working) return;
+        tracking.refresh();
+        if (resumed) TripTrackingService.startFromDashboard(this, tracking);
     }
 
+    boolean backgroundTrip() { return tracking.backgroundEnabled(); }
+
+    void setBackgroundTrip(boolean enabled) {
+        tracking.setBackgroundEnabled(enabled);
+        if (enabled) updateTracking();
+        else stopService(new Intent(this, TripTrackingService.class));
+    }
+
+    boolean needsTripNotificationPermission() {
+        return Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED;
+    }
+
+    void allowTripNotification() {
+        if (needsTripNotificationPermission()) requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, TRIP_NOTIFICATION_REQUEST);
+    }
+
+    @SuppressWarnings("MissingPermission") // Coarse or precise access; each provider call can still be denied.
     private void useLastWeatherLocation() {
         if (!weather.enabled()) return;
+        if (locations == null || (!preciseGps() && !coarseGps())) { weather.clearLocation(); return; }
         Location best = null;
         for (String provider : new String[]{LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER, LocationManager.PASSIVE_PROVIDER}) {
             try {
@@ -305,49 +354,25 @@ public final class DashboardActivity extends Activity implements LocationListene
                 if (fix != null && (best == null || fix.getElapsedRealtimeNanos() > best.getElapsedRealtimeNanos())) best = fix;
             } catch (RuntimeException ignored) { /* Optional provider/interface. */ }
         }
-        if (best != null && SystemClock.elapsedRealtime() - fixTime(best) < 60 * 60_000L) {
+        if (best != null && SystemClock.elapsedRealtime() - DriveTracking.fixTime(best) < 60 * 60_000L) {
             weather.location(best.getLatitude(), best.getLongitude());
         } else weather.clearLocation();
     }
 
-    private void stopGps() {
-        if (gpsListening && locations != null) {
-            try { locations.removeUpdates(this); } catch (RuntimeException ignored) {}
-        }
-        gpsListening = false;
-        trip.pause();
-    }
-
-    @Override public void onLocationChanged(Location fix) {
-        if (!working || shuttingDown || !gpsListening || fix == null) return;
-        long now = SystemClock.elapsedRealtime(), time = fixTime(fix);
-        if (time <= 0 || time > now || now - time > TripMeter.STALE_MS) return;
-        if (weather.enabled()) {
+    private void telemetry(Location fix, boolean warning) {
+        if (!working || destroyed) return;
+        if (fix != null && weather.enabled()) {
             weather.location(fix.getLatitude(), fix.getLongitude());
             weather.refresh(false);
         }
-        float speed = fix.hasSpeed() ? fix.getSpeed() : -1;
-        if (Build.VERSION.SDK_INT >= 26 && fix.hasSpeedAccuracy() && fix.getSpeedAccuracyMetersPerSecond() > 3f) speed = -1;
-        if (trip.accept(new TripMeter.Fix(time, fix.getLatitude(), fix.getLongitude(), fix.hasAccuracy() ? fix.getAccuracy() : 100,
-                speed, fix.hasBearing() ? fix.getBearing() : -1)) && !dashboard.showingGoodbye()) previewWarning();
-        if (saveAt < 0 || now - saveAt > 20_000L) persistTrip();
+        // Background tracking has no audio focus. Alert only on a live crossing in the visible dashboard.
+        if (warning && resumed && hasWindowFocus() && !shuttingDown && !dashboard.showingGoodbye()) previewWarning();
         render();
     }
 
-    private static long fixTime(Location fix) { return fix.getElapsedRealtimeNanos() / 1_000_000L; }
-
-    @Override public void onProviderEnabled(String provider) { if (working) { startGps(); render(); } }
-    @Override public void onProviderDisabled(String provider) { if (working) { startGps(); render(); } }
-    @Override public void onStatusChanged(String provider, int status, Bundle extras) { /* Legacy LocationListener. */ }
-
     void previewWarning() { audio.play(DriveAudio.Cue.WARNING); }
 
-    private void persistTrip() {
-        saveAt = SystemClock.elapsedRealtime();
-        prefs.edit().putFloat("trip_meters", (float) trip.meters()).putLong("trip_moving", trip.movingMs()).apply();
-    }
-
-    void resetTrip() { trip.reset(); persistTrip(); render(); toast("Trip distance and drive time reset."); }
+    void resetTrip() { tracking.resetTrip(); toast("Trip distance and drive time reset."); }
     int limit() { return Math.max(20, Math.min(140, prefs.getInt(LIMIT, 60))); }
     boolean alertEnabled() { return prefs.getBoolean(ALERT, true); }
     void setAlert(int limit, boolean enabled) {
@@ -358,7 +383,7 @@ public final class DashboardActivity extends Activity implements LocationListene
     }
 
     void notificationSetup() {
-        if (!apps.start(new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))) toast("Notification access is not available on this firmware.");
+        if (!apps.startExternal(new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))) toast("Notification access is not available on this firmware.");
     }
 
     boolean notificationsAllowed() { return DriveNotifications.isAllowed(this); }
@@ -373,7 +398,7 @@ public final class DashboardActivity extends Activity implements LocationListene
                 }
             } catch (RuntimeException ignored) { /* Fall through to older head-unit settings. */ }
         }
-        if (!apps.start(new Intent(Settings.ACTION_HOME_SETTINGS))) toast("Choose Vezel Drive Console in Android Default apps → Home app, if supported.");
+        if (!apps.startExternal(new Intent(Settings.ACTION_HOME_SETTINGS))) toast("Choose Vezel Drive Console in Android Default apps → Home app, if supported.");
     }
 
     private void unregisterQuietly(BroadcastReceiver receiver) {
@@ -417,9 +442,13 @@ public final class DashboardActivity extends Activity implements LocationListene
         if (!enabled) audio.stopGreeting();
     }
 
-    void replayWelcome() {
+    private void showWelcome() {
         lastWelcome = SystemClock.elapsedRealtime();
         dashboard.showPowerScreen(false);
+    }
+
+    void replayWelcome() {
+        showWelcome();
         if (powerTones()) audio.play(DriveAudio.Cue.WELCOME);
     }
 
@@ -430,9 +459,8 @@ public final class DashboardActivity extends Activity implements LocationListene
 
     private void beginGoodbye() {
         welcomePending = false;
-        main.removeCallbacks(resumeAfterWelcome);
-        media.cancelResume();
-        persistTrip();
+        cancelAutomaticResume();
+        tracking.checkpoint();
         if (!started || !interactive() || isFinishing()) return;
         long now = SystemClock.elapsedRealtime();
         if (now - lastGoodbye < 3_200L) return;
@@ -474,9 +502,9 @@ public final class DashboardActivity extends Activity implements LocationListene
                     Bundle extras = intent.getExtras();
                     PowerCue.Event event = ignition.update(extras == null ? null : LightSignal.read(extras.get(key)));
                     if (event == PowerCue.Event.GOODBYE) beginGoodbye();
-                    else if (event == PowerCue.Event.WELCOME) {
-                        welcomePending = true;
-                        if (started && interactive()) { panels.dismiss(); handleWake(); }
+                    else if (event == PowerCue.Event.WELCOME && started && interactive()) {
+                        panels.dismiss();
+                        welcomeFromPower();
                     }
                 } catch (RuntimeException ignored) { /* Malformed advisory input cannot change system power. */ }
             }
@@ -507,7 +535,8 @@ public final class DashboardActivity extends Activity implements LocationListene
         d.speed = previousSpeed = trip.speed(now);
         previousFix = trip.hasFix(now);
         boolean precise = preciseGps();
-        d.gps = !precise ? "ENABLE GPS" : !providerEnabled ? "GPS OFF" : previousFix ? "GPS FIX" : "AWAITING GPS";
+        d.gps = !precise ? "ENABLE GPS" : !tracking.providerEnabled() ? "GPS OFF"
+                : !tracking.sampling() ? "GPS PAUSED" : previousFix ? "GPS FIX" : "AWAITING GPS";
         d.setupNeeded = !homeSelected || !precise || !media.allowed();
         d.heading = trip.heading(now);
         d.trip = String.format(Locale.getDefault(), trip.meters() < 100_000 ? "%.1f" : "%.0f", trip.meters() / 1_000d);
@@ -546,12 +575,12 @@ public final class DashboardActivity extends Activity implements LocationListene
 
     void openMusic() {
         if (apps.launch(prefs.getString("shortcut_music", "")) || apps.launch(media.packageName())
-                || apps.start(Intent.makeMainSelectorActivity(Intent.ACTION_MAIN, Intent.CATEGORY_APP_MUSIC))) return;
+                || apps.startExternal(Intent.makeMainSelectorActivity(Intent.ACTION_MAIN, Intent.CATEGORY_APP_MUSIC))) return;
         panels.drawer("Assign music shortcut", "shortcut_music");
     }
 
     private void openPhone() {
-        if (apps.launch(prefs.getString("shortcut_phone", "")) || apps.start(new Intent(Intent.ACTION_DIAL, Uri.parse("tel:")))) return;
+        if (apps.launch(prefs.getString("shortcut_phone", "")) || apps.startExternal(new Intent(Intent.ACTION_DIAL, Uri.parse("tel:")))) return;
         panels.drawer("Assign phone shortcut", "shortcut_phone");
     }
 
@@ -561,7 +590,7 @@ public final class DashboardActivity extends Activity implements LocationListene
 
     void toggleWeather(boolean enabled) {
         prefs.edit().putBoolean("weather_enabled", enabled).apply();
-        if (enabled) { if (locations != null && (preciseGps() || coarseGps())) useLastWeatherLocation(); weather.refresh(false); }
+        if (enabled) { useLastWeatherLocation(); weather.refresh(false); }
         render();
     }
 
@@ -588,8 +617,8 @@ public final class DashboardActivity extends Activity implements LocationListene
             case DashboardView.RADIO: openRadio(); break;
             case DashboardView.SETTINGS: panels.settings(); break;
             case DashboardView.APPS:
-                if (!apps.start(new Intent(this, AppsActivity.class)))
-                    toast("Apps could not be opened.");
+                try { startActivity(new Intent(this, AppsActivity.class)); }
+                catch (RuntimeException unavailable) { toast("Apps could not be opened."); }
                 break;
             default: break;
         }

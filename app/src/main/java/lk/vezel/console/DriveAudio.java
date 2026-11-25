@@ -70,6 +70,11 @@ final class DriveAudio {
     void stopWarning() { if (playing == Cue.WARNING) stop(); }
     void stopGreeting() { if (playing != Cue.WARNING) stop(); }
 
+    boolean musicActive() {
+        try { return audio != null && audio.isMusicActive(); }
+        catch (RuntimeException unavailable) { return true; } // Never take focus on an unknown route.
+    }
+
     @SuppressWarnings("deprecation")
     private boolean takeFocus(Cue cue) {
         if (Build.VERSION.SDK_INT >= 26) {

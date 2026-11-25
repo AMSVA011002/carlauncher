@@ -3,12 +3,13 @@ package lk.vezel.console;
 public final class LogicTest {
     public static void main(String[] args) {
         tripAndAlert();
+        trackingAcrossApps();
         gauge();
         bluetoothAudio();
         lights();
         registration();
         power();
-        System.out.println("Trip, speed alert, gauge, BT Audio, illumination, power cue and registration tests passed.");
+        System.out.println("Trip, background GPS, speed alert, gauge, BT Audio, illumination, power cue and registration tests passed.");
     }
 
     private static void tripAndAlert() {
@@ -30,7 +31,7 @@ public final class LogicTest {
         double beforeGap = meter.meters();
         meter.pause();
         meter.accept(fix(41_000, 8, 17));
-        check(meter.meters() == beforeGap, "No trip increment over a foreground gap");
+        check(meter.meters() == beforeGap, "No trip increment over a pause in GPS");
         meter.reset();
         check(meter.meters() == 0 && meter.movingMs() == 0, "Reset trip");
         meter.alert(40, false);
@@ -49,6 +50,56 @@ public final class LogicTest {
         check(!equal.accept(fix(3000, 4, 58/3.6)) && !equal.limitReached(3000), "Hide visual warning below the threshold");
         check(!equal.accept(fix(4000, 4, 60/3.6)) && !equal.accept(fix(5000, 4, 60/3.6)), "Avoid a repeated warning during small fluctuations");
         check(!equal.limitReached(14000), "Hide warning when the GPS speed is stale");
+    }
+
+    private static void trackingAcrossApps() {
+        class Gps implements TrackingSession.Source {
+            int starts, stops;
+            boolean available = true;
+            @Override public boolean start() { starts++; return available; }
+            @Override public void stop() { stops++; }
+        }
+        Gps gps = new Gps();
+        TripMeter meter = new TripMeter(96_000, 60_000);
+        TrackingSession session = new TrackingSession(meter, gps);
+        session.update(true, true, false, 1_000); // Visible dashboard before the service is ready.
+        check(session.sampling() && gps.starts == 1, "Dashboard subscribes once");
+        session.accept(fix(1_000, 4, 25), 1_000);
+        session.update(true, true, true, 1_200); // Foreground service promoted, not a second GPS listener.
+        session.update(true, false, true, 1_300); // Radio covers Home.
+        for (int i = 1; i <= 200; i++) {
+            long now = 1_000L + i * 1_000L;
+            session.accept(new TripMeter.Fix(now, 6.913 + i * 25 / 111_195d, 79.851, 4, 25, 0), now);
+        }
+        session.update(true, true, true, 201_100); // Home, without dropping the fix or loading an old total.
+        check(gps.starts == 1 && gps.stops == 0, "Switching apps never restarts the active GPS stream");
+        check(Math.abs(meter.meters() - 101_000) < .01 && meter.movingMs() == 260_000,
+                "The trip goes from 96 km to 101 km and counts drive time while Radio is open");
+        check(meter.speed(201_100) == 90 && meter.heading(201_100) == 0, "Show live speed and heading immediately on Home");
+        check(session.accept(fix(190_000, 4, 25), 201_100) == TrackingSession.Sample.IGNORED
+                && session.accept(fix(202_000, 4, 25), 201_100) == TrackingSession.Sample.IGNORED,
+                "Ignore old or future GPS callbacks even with the service active");
+
+        session.update(false, false, true, 201_200); // Display off or GPS not available, even with the service alive.
+        check(!session.sampling() && gps.stops == 1 && meter.speed(201_200) == -1, "Screen off pauses GPS and clears the speed");
+        check(session.accept(fix(202_000, 4, 25), 202_000) == TrackingSession.Sample.IGNORED, "A queued fix cannot count while paused");
+        session.update(true, false, true, 202_100); // Screen wakes into Radio, not Home.
+        check(session.sampling() && gps.starts == 2, "Wake resumes tracking even with Radio still in front");
+        check(session.accept(fix(202_000, 4, 25), 202_100) == TrackingSession.Sample.IGNORED, "Reject a pre-wake fix on resume");
+        session.accept(fix(203_000, 4, 25), 203_000);
+        check(Math.abs(meter.meters() - 101_000) < .01 && meter.movingMs() == 260_000, "No mileage inferred across the screen-off gap");
+        session.update(true, false, false, 203_200); // Dashboard only action or OS stops the service.
+        check(!session.sampling() && gps.stops == 2, "No invisible sampling after background tracking is stopped");
+        session.update(true, true, false, 205_000);
+        check(session.sampling() && gps.starts == 3, "Dashboard GPS still works without the background service");
+        session.update(false, true, true, 205_200);
+        check(!session.sampling() && gps.stops == 3, "GPS disabled or permission lost suspends both tracking modes");
+        gps.available = false;
+        session.update(true, true, false, 206_000);
+        check(!session.sampling(), "Subscription rejection doesn't claim an active GPS stream");
+        gps.available = true;
+        session.update(true, true, false, 207_000);
+        check(session.sampling(), "A later foreground check can recover from a rejected subscription");
     }
 
     private static void power() {

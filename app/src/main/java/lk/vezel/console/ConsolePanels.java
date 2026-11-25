@@ -80,15 +80,17 @@ final class ConsolePanels {
         });
         note(s.body, "Auto uses the same input for the dashboard colors and photo. Screen brightness stays under the head unit’s control.");
         section(s.body, "Driving");
+        toggle(s.body, "Track trips in other apps", activity.backgroundTrip(), activity::setBackgroundTrip);
+        note(s.body, "With precise GPS, trip distance and drive time keep updating in Radio, Music and other apps while the screen is on. Switch this off for dashboard-only tracking.");
         button(s.body, "Speed alert  ·  " + (activity.alertEnabled() ? activity.limit() + " km/h" : "off"), true, this::speed);
         button(s.body, "Reset trip distance and drive time", false, this::confirmReset);
         section(s.body, "Android setup");
         button(s.body, "Home app, GPS and notification access", false, this::setup);
         button(s.body, "Open Android Wi-Fi settings", false, () -> {
-            dismiss(); if (!activity.apps.start(new Intent(Settings.ACTION_WIFI_SETTINGS))) activity.toast("Wi-Fi settings are unavailable.");
+            dismiss(); if (!activity.apps.startExternal(new Intent(Settings.ACTION_WIFI_SETTINGS))) activity.toast("Wi-Fi settings are unavailable.");
         });
         section(s.body, "Media playback");
-        toggle(s.body, "Resume the last playing media session on startup", activity.prefs.getBoolean("resume_music", true), enabled -> {
+        toggle(s.body, "Resume the last playing media session after wake", activity.prefs.getBoolean("resume_music", true), enabled -> {
             activity.prefs.edit().putBoolean("resume_music", enabled).apply();
             if (!enabled) activity.media.cancelResume();
         });
@@ -140,6 +142,10 @@ final class ConsolePanels {
         button(s.body, activity.preciseGps() ? "Precise location allowed" : "Allow precise location", false, () -> {
             dismiss(); activity.requestGps();
         });
+        note(s.body, "GPS can keep counting your trip while another app is open. Manage this under Settings → Driving. The tracking notification can switch to dashboard-only GPS.");
+        if (activity.needsTripNotificationPermission()) {
+            button(s.body, "Show GPS tracking notification", false, () -> { dismiss(); activity.allowTripNotification(); });
+        }
         section(s.body, "3. Music and playback controls");
         button(s.body, activity.notificationsAllowed() ? "Notification access allowed" : "Allow notification access", false, () -> {
             dismiss(); activity.notificationSetup();

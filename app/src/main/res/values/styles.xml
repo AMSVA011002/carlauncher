@@ -1,6 +1,9 @@
 <resources>
     <string name="app_name">Vezel Drive Console</string>
     <string name="notification_service">Vezel media controls</string>
+    <string name="trip_tracking_title">GPS trip tracking</string>
+    <string name="trip_tracking_text">Counts your trip while the screen is on.</string>
+    <string name="trip_tracking_dashboard_only">Dashboard only</string>
     <style name="ConsoleBase" parent="android:style/Theme.Material.NoActionBar">
         <item name="android:fontFamily">sans</item>
         <item name="android:windowBackground">#0D0E12</item>
