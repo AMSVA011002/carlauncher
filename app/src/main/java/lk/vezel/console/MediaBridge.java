@@ -49,9 +49,10 @@ final class MediaBridge {
         audio = context.getSystemService(AudioManager.class);
     }
 
-    void start() { watching = true; refresh(); }
+    void startWatching() { watching = true; refresh(); }
 
-    void stop() {
+    /** Detach dashboard listeners only. Do not change playback when leaving or returning Home. */
+    void stopWatching() {
         watching = false;
         if (listening && manager != null) {
             try { manager.removeOnActiveSessionsChangedListener(listener); } catch (RuntimeException ignored) {}

@@ -18,12 +18,13 @@ import java.util.Map;
 
 final class AppShortcuts {
     static final class Entry {
-        final String name, pkg;
+        final String name, pkg, category;
         final ResolveInfo activity;
         final ComponentName component;
         final int bluetoothScore;
-        Entry(String name, ResolveInfo info, boolean bluetooth) {
+        Entry(String name, ResolveInfo info, String category, boolean bluetooth) {
             this.name = name;
+            this.category = category;
             pkg = info.activityInfo.packageName;
             activity = info;
             component = new ComponentName(pkg, info.activityInfo.name);
@@ -41,9 +42,12 @@ final class AppShortcuts {
 
     AppShortcuts(Activity activity) { this.activity = activity; manager = activity.getPackageManager(); }
 
-    boolean start(Intent intent) {
+    boolean startExternal(Intent intent) {
         if (intent == null) return false;
-        try { activity.startActivity(intent); return true; }
+        // Keep external screens out of the Home task. Bring existing tasks forward as-is;
+        // Resetting the task on launch can clear the other app's activity stack.
+        Intent external = new Intent(intent).setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        try { activity.startActivity(external); return true; }
         catch (RuntimeException ignored) { return false; }
     }
 
@@ -52,27 +56,28 @@ final class AppShortcuts {
         try {
             Intent intent = manager.getLaunchIntentForPackage(pkg);
             if (intent == null) intent = manager.getLeanbackLaunchIntentForPackage(pkg);
-            return start(intent);
+            return startExternal(intent);
         } catch (RuntimeException ignored) { return false; }
     }
 
-    boolean launch(Entry entry) { return launchActivity(entry.component) || launch(entry.pkg); }
+    boolean launch(Entry entry) { return launchActivity(entry.component, entry.category) || launch(entry.pkg); }
 
-    private boolean launchActivity(ComponentName component) {
+    private boolean launchActivity(ComponentName component, String category) {
         if (component == null || component.getPackageName().equals(activity.getPackageName())) return false;
-        return start(new Intent(Intent.ACTION_MAIN).setComponent(component)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED));
+        Intent intent = new Intent(Intent.ACTION_MAIN).setComponent(component);
+        if (category != null) intent.addCategory(category);
+        return startExternal(intent);
     }
 
     boolean launchBluetooth(String assigned) {
-        if (!assigned.isEmpty()) return launchActivity(ComponentName.unflattenFromString(assigned));
+        if (!assigned.isEmpty()) return launchActivity(ComponentName.unflattenFromString(assigned), null);
         List<Entry> choices = bluetoothChoices();
         if (choices.isEmpty()) return false;
         Entry best = choices.get(0);
         int score = best.bluetoothScore;
         // Let the driver pick if no strong match exists or if the top score is tied.
         return score > 0 && (choices.size() == 1 || choices.get(1).bluetoothScore < score)
-                && launchActivity(best.component);
+                && launchActivity(best.component, best.category);
     }
 
     String bluetoothLabel(String assigned) {
@@ -129,7 +134,7 @@ final class AppShortcuts {
                 if (result.containsKey(key) || pkg.equals(activity.getPackageName())) continue;
                 CharSequence label = null;
                 try { label = info.loadLabel(manager); } catch (RuntimeException ignored) { /* Use the package label below. */ }
-                result.put(key, new Entry(label == null || label.length() == 0 ? pkg : label.toString(), info, byComponent));
+                result.put(key, new Entry(label == null || label.length() == 0 ? pkg : label.toString(), info, category, byComponent));
             }
         } catch (RuntimeException ignored) { /* Firmware may only expose a limited package list. */ }
     }
